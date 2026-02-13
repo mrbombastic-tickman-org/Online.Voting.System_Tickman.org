@@ -1,0 +1,72 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model GovernmentRecord {
+  id             String   @id @default(uuid())
+  fullName       String
+  dateOfBirth    String
+  documentNumber String   @unique
+  address        String
+  photoUrl       String
+  createdAt      DateTime @default(now())
+  users          User[]
+}
+
+model User {
+  id             String           @id @default(uuid())
+  email          String           @unique
+  passwordHash   String
+  fullName       String
+  documentNumber String           @unique
+  faceImageUrl   String?
+  faceDescriptor String?  @db.Text
+  verified       Boolean          @default(false)
+  registeredAt   DateTime         @default(now())
+  governmentRecord GovernmentRecord @relation(fields: [documentNumber], references: [documentNumber])
+  votes          Vote[]
+}
+
+model Election {
+  id          String      @id @default(uuid())
+  title       String
+  description String
+  startDate   DateTime
+  endDate     DateTime
+  isActive    Boolean     @default(true)
+  candidates  Candidate[]
+  votes       Vote[]
+  createdAt   DateTime    @default(now())
+}
+
+model Candidate {
+  id         String   @id @default(uuid())
+  name       String
+  party      String
+  symbol     String   @default("🏛️")
+  photoUrl   String?
+  electionId String
+  election   Election @relation(fields: [electionId], references: [id])
+  votes      Vote[]
+}
+
+model Vote {
+  id                String    @id @default(uuid())
+  userId            String
+  candidateId       String
+  electionId        String
+  ipAddress         String
+  deviceFingerprint String?
+  votedAt           DateTime  @default(now())
+  user              User      @relation(fields: [userId], references: [id])
+  candidate         Candidate @relation(fields: [candidateId], references: [id])
+  election          Election  @relation(fields: [electionId], references: [id])
+
+  @@unique([userId, electionId])
+  @@unique([ipAddress, electionId])
+}
