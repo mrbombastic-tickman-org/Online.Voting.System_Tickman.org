@@ -1,7 +1,22 @@
 import type { NextConfig } from "next";
+import path from "path";
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
+  webpack(config, { isServer }) {
+    if (isServer) {
+      // Never bundle @vladmandic/human on the server — it's browser-only
+      const externals = Array.isArray(config.externals) ? config.externals : [];
+      config.externals = [...externals, '@vladmandic/human'];
+    } else {
+      // For the browser bundle: force the ESM browser build (not human.node.js)
+      config.resolve.alias['@vladmandic/human'] = path.resolve(
+        './node_modules/@vladmandic/human/dist/human.esm.js'
+      );
+    }
+    return config;
+  },
+
   // Security headers
   async headers() {
     return [

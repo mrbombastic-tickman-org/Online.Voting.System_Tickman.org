@@ -1,5 +1,6 @@
 'use client';
 import { useRef, useState, useCallback, useEffect } from 'react';
+// Type-only import — erased at runtime, so no Node.js bundle loaded at SSR
 import type { Human, Config, Result } from '@vladmandic/human';
 
 // ─── Singleton Human instance ───────────────────────────────────────────────
@@ -36,8 +37,12 @@ async function getHuman(): Promise<Human> {
     if (humanLoadPromise) return humanLoadPromise;
 
     humanLoadPromise = (async () => {
-        // Dynamic import so it only loads in the browser (not SSR)
-        const { Human: HumanClass } = await import('@vladmandic/human');
+        // Explicitly import the ESM browser build — prevents Next.js from
+        // accidentally resolving to human.node.js during SSR.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // @ts-ignore — no .d.ts for the ESM path; webpack alias handles the correct build
+        const mod: any = await import('@vladmandic/human/dist/human.esm.js');
+        const HumanClass: typeof Human = mod.Human ?? mod.default;
         const h = new HumanClass(humanConfig);
         await h.load();
         humanInstance = h;
