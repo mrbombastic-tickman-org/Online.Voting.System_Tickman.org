@@ -41,6 +41,8 @@ export default function AdminPage() {
     const [recentVotes, setRecentVotes] = useState<RecentVote[]>([]);
     const [loading, setLoading] = useState(true);
     const [accessError, setAccessError] = useState('');
+    const [ipTracking, setIpTracking] = useState(true);
+    const [ipToggleLoading, setIpToggleLoading] = useState(false);
 
     useEffect(() => {
         fetch('/api/auth/session')
@@ -69,7 +71,33 @@ export default function AdminPage() {
                 setLoading(false);
             })
             .catch(() => setLoading(false));
+
+        // Fetch IP tracking status
+        fetch('/api/admin/ip-tracking')
+            .then(r => r.json())
+            .then(data => {
+                if (data.ipTrackingEnabled !== undefined) {
+                    setIpTracking(data.ipTrackingEnabled);
+                }
+            })
+            .catch(() => { });
     }, [router]);
+
+    const toggleIpTracking = async () => {
+        setIpToggleLoading(true);
+        try {
+            const res = await fetch('/api/admin/ip-tracking', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: !ipTracking }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setIpTracking(data.ipTrackingEnabled);
+            }
+        } catch { /* ignore */ }
+        setIpToggleLoading(false);
+    };
 
     if (loading) {
         return <LoadingSpinner message="Loading admin panel..." size="lg" />;
@@ -111,6 +139,28 @@ export default function AdminPage() {
                     <div className="stat-number">{stats?.totalVotes || 0}</div>
                     <div className="stat-label">Total Votes Cast</div>
                 </div>
+            </div>
+
+            {/* IP Tracking Toggle */}
+            <div className="card mb-24" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16 }}>
+                <div>
+                    <h3 style={{ fontSize: '1rem', marginBottom: 4, fontWeight: 600 }}>🌐 IP Address Tracking</h3>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0 }}>
+                        {ipTracking
+                            ? 'IP addresses are being recorded with each vote for rate limiting and fraud detection.'
+                            : 'IP tracking is disabled. Votes will not record IP addresses. Rate limiting uses fallback.'}
+                    </p>
+                </div>
+                <button
+                    className={`toggle-switch ${ipTracking ? 'active' : ''}`}
+                    onClick={toggleIpTracking}
+                    disabled={ipToggleLoading}
+                    aria-label={`IP tracking is ${ipTracking ? 'on' : 'off'}. Click to toggle.`}
+                    role="switch"
+                    aria-checked={ipTracking}
+                >
+                    <span className="toggle-knob" />
+                </button>
             </div>
 
             {/* Election Results */}

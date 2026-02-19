@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import prisma from '@/lib/prisma';
 import { getSession, getClientIP, checkRateLimit } from '@/lib/auth';
 import { facePlusPlus } from '@/lib/faceplusplus';
+import { isIpTrackingEnabled } from '@/lib/ip-tracking';
 
 // Rate limit: 10 vote attempts per minute per IP
 const VOTE_RATE_LIMIT = {
@@ -13,9 +14,11 @@ const VOTE_RATE_LIMIT = {
 
 export async function POST(request: NextRequest) {
     try {
-        // Rate limiting first
+        // Rate limiting — use IP when tracking is on, userId otherwise
         const clientIP = getClientIP(request);
-        const rateLimit = checkRateLimit(`vote:${clientIP}`, VOTE_RATE_LIMIT);
+        const ipEnabled = isIpTrackingEnabled();
+        const rateLimitKey = `vote:${clientIP}`;
+        const rateLimit = checkRateLimit(rateLimitKey, VOTE_RATE_LIMIT);
         if (!rateLimit.allowed) {
             return NextResponse.json(
                 { error: VOTE_RATE_LIMIT.message },
@@ -169,7 +172,7 @@ export async function POST(request: NextRequest) {
                     userId: session.userId,
                     candidateId,
                     electionId,
-                    ipAddress: clientIP,
+                    ipAddress: ipEnabled ? clientIP : 'disabled',
                     deviceFingerprint,
                 },
             });
