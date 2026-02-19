@@ -15,21 +15,34 @@ model GovernmentRecord {
   address        String
   photoUrl       String
   createdAt      DateTime @default(now())
-  users          User[]
+  users          User?
 }
 
 model User {
-  id             String           @id @default(uuid())
-  email          String           @unique
-  passwordHash   String
-  fullName       String
-  documentNumber String           @unique
-  faceImageUrl   String?
-  faceDescriptor String?  @db.Text
-  verified       Boolean          @default(false)
-  registeredAt   DateTime         @default(now())
+  id               String           @id @default(uuid())
+  email            String           @unique
+  passwordHash     String
+  fullName         String
+  documentNumber   String           @unique
+  faceImageUrl     String?
+  verified         Boolean          @default(false)
+  isAdmin          Boolean          @default(false)
+  registeredAt     DateTime         @default(now())
+  faceDescriptor   String?
   governmentRecord GovernmentRecord @relation(fields: [documentNumber], references: [documentNumber])
-  votes          Vote[]
+  votes            Vote[]
+  sessions         Session[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Election {
@@ -39,9 +52,9 @@ model Election {
   startDate   DateTime
   endDate     DateTime
   isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
   candidates  Candidate[]
   votes       Vote[]
-  createdAt   DateTime    @default(now())
 }
 
 model Candidate {
@@ -63,10 +76,11 @@ model Vote {
   ipAddress         String
   deviceFingerprint String?
   votedAt           DateTime  @default(now())
-  user              User      @relation(fields: [userId], references: [id])
   candidate         Candidate @relation(fields: [candidateId], references: [id])
   election          Election  @relation(fields: [electionId], references: [id])
+  user              User      @relation(fields: [userId], references: [id])
 
   @@unique([userId, electionId])
   @@unique([ipAddress, electionId])
 }
+

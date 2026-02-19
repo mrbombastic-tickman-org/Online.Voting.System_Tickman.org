@@ -91,8 +91,8 @@ export default function LoginPage() {
                     </Link>
                 </p>
 
-                <div className="alert auth-demo">
-                    <strong>Demo Admin:</strong> admin@votesecure.in / admin123
+                <div className="alert alert-info" style={{ fontSize: '0.9rem' }}>
+                    <strong>New user?</strong> Create an account to participate in secure voting.
                 </div>
             </div>
         </div>

@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 
 interface NavSession {
     authenticated: boolean;
-    user?: { fullName: string; email: string };
+    user?: { fullName: string; email: string; isAdmin?: boolean };
 }
 
 export default function Navbar() {
@@ -72,11 +72,17 @@ export default function Navbar() {
                     <NavLink href="/vote" label="Vote Now" active={pathname === '/vote'} />
                     <NavLink href="/register" label="Register" active={pathname === '/register'} />
 
+                    {!session?.authenticated && (
+                        <NavLink href="/login" label="Login" active={pathname === '/login'} />
+                    )}
+
                     {session?.authenticated && (
                         <NavLink href="/dashboard" label="Dashboard" active={pathname === '/dashboard'} />
                     )}
 
-                    <NavLink href="/admin" label="Admin" active={pathname === '/admin'} />
+                    {session?.authenticated && session?.user?.isAdmin && (
+                        <NavLink href="/admin" label="Admin" active={pathname === '/admin'} />
+                    )}
 
                     {session?.authenticated && (
                         <button

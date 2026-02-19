@@ -18,7 +18,7 @@ function generateRandomRecord(index: number) {
     const p3 = 1000 + Math.floor(Math.random() * 8999);
 
     return {
-        id: `gov-${100 + index}`,
+        id: `gov-${2000 + index}`, // Start from gov-2000 to avoid conflict with gov-001
         fullName: `${firstName} ${lastName}`,
         dateOfBirth: `${1970 + Math.floor(Math.random() * 30)}-${String(1 + Math.floor(Math.random() * 12)).padStart(2, '0')}-${String(1 + Math.floor(Math.random() * 28)).padStart(2, '0')}`,
         documentNumber: `AADHAAR-${p1}-${p2}-${p3}`,
@@ -39,7 +39,8 @@ async function main() {
 
     console.log('Cleared existing data.');
 
-    // Generate 100 dummy records
+    // Generate 1000 dummy records (configurable)
+    const RECORD_COUNT = 1000;
     const governmentRecords = [];
     // Add known test record
     governmentRecords.push({
@@ -51,14 +52,12 @@ async function main() {
         photoUrl: '/gov-photos/citizen-1.jpg',
     });
 
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < RECORD_COUNT; i++) {
         governmentRecords.push(generateRandomRecord(i));
     }
 
-    // Seed government records in batches
-    for (const record of governmentRecords) {
-        await prisma.governmentRecord.create({ data: record });
-    }
+    // Seed government records in batches using createMany for efficiency
+    await prisma.governmentRecord.createMany({ data: governmentRecords, skipDuplicates: true });
     console.log('Created ' + governmentRecords.length + ' government records');
 
     // Seed election
@@ -92,19 +91,22 @@ async function main() {
     }
     console.log('Created ' + candidates.length + ' candidates');
 
-    // Create admin user
+    // Create admin user with strong password
     const adminRecord = governmentRecords[0];
+    const adminPassword = process.env.ADMIN_INITIAL_PASSWORD || 'SecureAdmin2026!@#';
     await prisma.user.create({
         data: {
             id: 'admin-user',
             email: 'admin@votesecure.in',
-            passwordHash: hashSync('admin123', 10),
+            passwordHash: hashSync(adminPassword, 12), // Higher bcrypt cost
             fullName: 'Admin User',
             documentNumber: adminRecord.documentNumber,
             verified: true,
+            isAdmin: true, // Set admin flag
         },
     });
-    console.log('Created admin user (admin@votesecure.in / admin123)');
+    console.log('Created admin user (admin@votesecure.in)');
+    console.log('IMPORTANT: Change default admin password immediately after first login!');
 
     console.log('Seeding complete!');
     // Print 5 sample IDs for the user to try

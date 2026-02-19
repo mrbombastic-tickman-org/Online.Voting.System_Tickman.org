@@ -1,8 +1,50 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useFaceDetection } from '@/lib/face-utils';
 import StepIndicator from '@/components/StepIndicator';
+
+function PasswordStrength({ password }: { password: string }) {
+    const getStrength = (pwd: string): { score: number; label: string; color: string } => {
+        if (!pwd) return { score: 0, label: '', color: '' };
+        let score = 0;
+        if (pwd.length >= 8) score++;
+        if (/[A-Z]/.test(pwd)) score++;
+        if (/[a-z]/.test(pwd)) score++;
+        if (/[0-9]/.test(pwd)) score++;
+        if (/[^A-Za-z0-9]/.test(pwd)) score++;
+        
+        if (score <= 2) return { score, label: 'Weak', color: '#ff4757' };
+        if (score <= 4) return { score, label: 'Medium', color: '#ffa502' };
+        return { score, label: 'Strong', color: '#2ed573' };
+    };
+    
+    const strength = getStrength(password);
+    if (!password) return null;
+    
+    return (
+        <div style={{ marginTop: '8px' }}>
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '4px' }}>
+                {[1, 2, 3, 4, 5].map((i) => (
+                    <div
+                        key={i}
+                        style={{
+                            flex: 1,
+                            height: '4px',
+                            backgroundColor: i <= strength.score ? strength.color : '#e0e0e0',
+                            borderRadius: '2px',
+                            transition: 'background-color 0.2s'
+                        }}
+                    />
+                ))}
+            </div>
+            <span style={{ fontSize: '0.8rem', color: strength.color, fontWeight: 600 }}>
+                {strength.label}
+            </span>
+        </div>
+    );
+}
 
 interface GovRecord {
     fullName: string;
@@ -144,6 +186,15 @@ export default function RegisterPage() {
                         >
                             {loading ? 'Verifying...' : 'Verify Identity →'}
                         </button>
+                        
+                        <div className="text-center mt-24">
+                            <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>
+                                Already have an account?{' '}
+                                <Link href="/login" style={{ color: 'var(--black)', fontWeight: 700, textDecoration: 'underline' }}>
+                                    Login here
+                                </Link>
+                            </p>
+                        </div>
                     </div>
                 )}
 
@@ -163,15 +214,14 @@ export default function RegisterPage() {
                             <label htmlFor="reg-email" className="form-label">Email Address</label>
                             <input id="reg-email" type="email" className="form-input" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
                         </div>
-                        <div className="grid-2">
-                            <div className="form-group">
-                                <label htmlFor="reg-password" className="form-label">Password</label>
-                                <input id="reg-password" type="password" className="form-input" placeholder="Min 6 characters" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
-                            </div>
-                            <div className="form-group">
-                                <label htmlFor="reg-confirm" className="form-label">Confirm</label>
-                                <input id="reg-confirm" type="password" className="form-input" placeholder="Re-enter password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" />
-                            </div>
+                        <div className="form-group">
+                            <label htmlFor="reg-password" className="form-label">Password</label>
+                            <input id="reg-password" type="password" className="form-input" placeholder="Min 6 characters" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+                            <PasswordStrength password={password} />
+                        </div>
+                        <div className="form-group">
+                            <label htmlFor="reg-confirm" className="form-label">Confirm Password</label>
+                            <input id="reg-confirm" type="password" className="form-input" placeholder="Re-enter password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" />
                         </div>
 
                         {confirmPassword && password !== confirmPassword && (
@@ -242,8 +292,11 @@ export default function RegisterPage() {
                         )}
 
                         {face.status === 'error' && (
-                            <div className="text-center" style={{ padding: 20 }}>
-                                <div className="alert alert-error" role="alert">{face.errorMsg}</div>
+                            <div className="text-center" style={{ padding: 20 }} role="alert" aria-live="assertive">
+                                <div className="alert alert-error">{face.errorMsg}</div>
+                                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '12px', marginBottom: '16px' }}>
+                                    Make sure you have granted camera permissions in your browser settings.
+                                </p>
                                 <button className="btn btn-primary mt-12" onClick={() => face.startCamera()}>Restart Camera</button>
                             </div>
                         )}

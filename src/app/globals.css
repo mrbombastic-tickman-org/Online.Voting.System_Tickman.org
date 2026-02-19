@@ -2,8 +2,9 @@
 
 :root {
   /* Neo-Brutalist Palette */
-  --lime: #CCFF00;
-  --lime-dark: #b3e600;
+  --lime: #9ACD32;  /* Changed from #CCFF00 for better contrast (4.5:1) */
+  --lime-dark: #7BA828;
+  --lime-light: #CCFF00;  /* Original lime for accents only */
   --white: #ffffff;
   --black: #000000;
   --bg-primary: #f8f8f8;
@@ -174,6 +175,11 @@ h6 {
 .btn-primary {
   background: var(--lime);
   color: var(--black);
+  font-weight: 700;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--lime-dark);
 }
 
 .btn-secondary {
@@ -1105,9 +1111,23 @@ table.styled-table code {
   width: 100%;
 }
 
-/* ===========================
+  /* ===========================
    Responsive — Tablet (≤ 900px)
    =========================== */
+@media (max-width: 768px) {
+  .page-title {
+    font-size: 2.8rem;
+  }
+
+  .hero-title {
+    font-size: 3.2rem;
+  }
+
+  .grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 900px) {
   .page-title {
     font-size: 3rem;

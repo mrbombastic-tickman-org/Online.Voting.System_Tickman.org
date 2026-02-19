@@ -165,6 +165,36 @@ export default function VotePage() {
         return <LoadingSpinner message="Loading Ballots..." size="lg" />;
     }
 
+    if (!elections.length) {
+        return (
+            <div className="container page-wrapper">
+                <div className="card animate-in text-center" style={{ padding: 60 }}>
+                    <div style={{ fontSize: '4rem' }} aria-hidden="true">📭</div>
+                    <h2 className="mt-20">No Active Elections</h2>
+                    <p className="mt-12">There are no elections available at this time.</p>
+                    <button onClick={() => router.push('/dashboard')} className="btn btn-primary mt-24">
+                        Return to Dashboard
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    if (!user) {
+        return (
+            <div className="container page-wrapper">
+                <div className="card animate-in text-center" style={{ padding: 60 }}>
+                    <div style={{ fontSize: '3rem' }} aria-hidden="true">🔒</div>
+                    <h2 className="mt-20">Session Expired</h2>
+                    <p className="mt-12">Please login again to vote.</p>
+                    <button onClick={() => router.push('/login')} className="btn btn-primary mt-24">
+                        Go to Login
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     if (voteSuccess) {
         return (
             <div className="container page-wrapper">
@@ -257,9 +287,12 @@ export default function VotePage() {
                         )}
 
                         {(face.status === 'idle' || face.status === 'loading') && !faceResult && (
-                            <div className="face-loading-placeholder">
+                            <div className="face-loading-placeholder" role="status" aria-live="polite" aria-busy="true">
                                 <div className="spinner mb-24" aria-hidden="true" />
                                 <h3>Starting Camera...</h3>
+                                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '12px' }}>
+                                    Please allow camera access when prompted
+                                </p>
                             </div>
                         )}
 
@@ -303,8 +336,11 @@ export default function VotePage() {
                         )}
 
                         {face.status === 'error' && (
-                            <div className="text-center" style={{ padding: 20 }}>
-                                <div className="alert alert-error" role="alert">{face.errorMsg}</div>
+                            <div className="text-center" style={{ padding: 20 }} role="alert" aria-live="assertive">
+                                <div className="alert alert-error">{face.errorMsg}</div>
+                                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '12px', marginBottom: '16px' }}>
+                                    Make sure you have granted camera permissions in your browser settings.
+                                </p>
                                 <button className="btn btn-primary mt-12" onClick={() => face.startCamera()}>Restart Camera</button>
                             </div>
                         )}

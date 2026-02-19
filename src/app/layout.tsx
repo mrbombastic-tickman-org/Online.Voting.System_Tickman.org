@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
+import ErrorBoundary from "@/components/ErrorBoundary";
 
 export const metadata: Metadata = {
   title: "VoteSecure India — Secure Online Voting System",
@@ -20,10 +21,12 @@ export default function RootLayout({
         </a>
         <Navbar />
         <main id="main-content">
-          {children}
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
         </main>
         <footer className="footer" role="contentinfo">
-          Made with 🇮🇳 for India — <span>VoteSecure</span> © 2026
+          Made with <span style={{ color: '#FF9933' }}>■</span><span style={{ color: '#FFFFFF' }}>■</span><span style={{ color: '#138808' }}>■</span> for India — <span>VoteSecure</span> © 2026
         </footer>
       </body>
     </html>

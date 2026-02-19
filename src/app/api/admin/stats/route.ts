@@ -2,16 +2,16 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getSession } from '@/lib/auth';
 
-const ADMIN_EMAIL = 'admin@votesecure.in';
-
 export async function GET() {
     try {
-        // Auth guard: only admin can access stats
         const session = await getSession();
         if (!session) {
             return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
         }
-        if (session.email !== ADMIN_EMAIL) {
+
+        // Use DB-backed isAdmin flag (set at login, not env emails)
+        if (!session.isAdmin) {
+            console.warn(`Unauthorized admin access attempt by: ${session.email}`);
             return NextResponse.json({ error: 'Admin privileges required' }, { status: 403 });
         }
 
@@ -61,9 +61,10 @@ export async function GET() {
                     votes: c._count.votes,
                 })),
             })),
+            // Mask IP addresses more thoroughly for privacy
             recentVotes: recentVotes.map((v) => ({
                 id: v.id,
-                ipAddress: v.ipAddress.replace(/\d+\.\d+$/, '*.***'),
+                ipAddress: maskIPAddress(v.ipAddress),
                 votedAt: v.votedAt,
                 candidate: v.candidate.name,
                 party: v.candidate.party,
@@ -74,4 +75,20 @@ export async function GET() {
         console.error('Admin stats error:', error);
         return NextResponse.json({ error: 'Failed to fetch admin stats' }, { status: 500 });
     }
+}
+
+// Mask IP address for privacy (show less info)
+function maskIPAddress(ip: string): string {
+    if (ip === 'unknown') return 'unknown';
+    const parts = ip.split('.');
+    if (parts.length === 4) {
+        // Only show first octet
+        return `${parts[0]}.***.***.***`;
+    }
+    // Handle IPv6
+    if (ip.includes(':')) {
+        const v6parts = ip.split(':');
+        return `${v6parts[0]}:****:****:****`;
+    }
+    return '***.***.***.***';
 }

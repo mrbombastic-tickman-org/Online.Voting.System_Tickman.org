@@ -4,11 +4,24 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import LoadingSpinner from '@/components/LoadingSpinner';
 
+function LogoutButton({ onLogout }: { onLogout: () => void }) {
+    return (
+        <button 
+            onClick={onLogout}
+            className="btn btn-danger btn-sm"
+            style={{ marginTop: '16px' }}
+        >
+            Logout
+        </button>
+    );
+}
+
 interface UserProfile {
     userId: string;
     fullName: string;
     email: string;
     verified: boolean;
+    isAdmin?: boolean;
 }
 
 interface DashboardElection {
@@ -25,6 +38,11 @@ export default function DashboardPage() {
     const [user, setUser] = useState<UserProfile | null>(null);
     const [elections, setElections] = useState<DashboardElection[]>([]);
     const [loading, setLoading] = useState(true);
+
+    const handleLogout = async () => {
+        await fetch('/api/auth/logout', { method: 'POST' });
+        router.push('/');
+    };
 
     useEffect(() => {
         fetch('/api/auth/session')
@@ -46,8 +64,21 @@ export default function DashboardPage() {
             .catch(() => setLoading(false));
     }, [router]);
 
-    if (loading || !user) {
+    if (loading) {
         return <LoadingSpinner message="Loading dashboard..." size="lg" />;
+    }
+
+    if (!user) {
+        return (
+            <div className="container page-wrapper">
+                <div className="card animate-in text-center" style={{ padding: 60 }}>
+                    <div style={{ fontSize: '3rem' }} aria-hidden="true">🔒</div>
+                    <h2 className="mt-20">Session Expired</h2>
+                    <p className="mt-12">Please login again to continue.</p>
+                    <Link href="/login" className="btn btn-primary mt-24">Go to Login</Link>
+                </div>
+            </div>
+        );
     }
 
     return (
@@ -90,12 +121,21 @@ export default function DashboardPage() {
                         Quick Actions
                     </h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        <Link href="/vote" className="btn btn-primary w-full">
-                            🗳️ Go to Voting Panel
-                        </Link>
-                        <Link href="/admin" className="btn btn-secondary w-full">
-                            📊 View Election Results
-                        </Link>
+                        {user.verified ? (
+                            <Link href="/vote" className="btn btn-primary w-full">
+                                🗳️ Go to Voting Panel
+                            </Link>
+                        ) : (
+                            <div className="alert alert-info" style={{ fontSize: '0.85rem', marginBottom: 0 }}>
+                                Complete registration to vote
+                            </div>
+                        )}
+                        {user.isAdmin && (
+                            <Link href="/admin" className="btn btn-secondary w-full">
+                                📊 Admin Dashboard
+                            </Link>
+                        )}
+                        <LogoutButton onLogout={handleLogout} />
                     </div>
                 </div>
             </div>

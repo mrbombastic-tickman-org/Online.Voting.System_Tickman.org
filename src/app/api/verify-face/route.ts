@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getSession } from '@/lib/auth';
+import { getSession, checkRateLimit, getClientIP } from '@/lib/auth';
 
 // Euclidean distance between two face descriptors
 function euclideanDistance(desc1: number[], desc2: number[]): number {
@@ -12,11 +12,28 @@ function euclideanDistance(desc1: number[], desc2: number[]): number {
     return Math.sqrt(sum);
 }
 
-// face-api.js uses ~0.6 threshold for the 128-dim descriptor
-const FACE_MATCH_THRESHOLD = 0.6;
+// @vladmandic/human uses 512-dim embeddings with tighter Euclidean distance
+const FACE_MATCH_THRESHOLD = 0.4;
+
+// Rate limit: 20 face verification attempts per minute
+const FACE_RATE_LIMIT = {
+    windowMs: 60 * 1000,
+    maxRequests: 20,
+    message: 'Too many face verification attempts.',
+};
 
 export async function POST(request: NextRequest) {
     try {
+        // Rate limiting
+        const clientIP = getClientIP(request);
+        const rateLimit = checkRateLimit(`face-verify:${clientIP}`, FACE_RATE_LIMIT);
+        if (!rateLimit.allowed) {
+            return NextResponse.json(
+                { error: FACE_RATE_LIMIT.message },
+                { status: 429 }
+            );
+        }
+
         const session = await getSession();
         if (!session) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
@@ -35,14 +52,20 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Invalid face descriptor format' }, { status: 400 });
         }
 
-        if (!Array.isArray(incomingDesc) || incomingDesc.length !== 128) {
-            return NextResponse.json({ error: 'Invalid face descriptor: must be a 128-dimensional vector' }, { status: 400 });
+        // Validate descriptor array
+        if (!Array.isArray(incomingDesc) || incomingDesc.length !== 512) {
+            return NextResponse.json({ error: 'Invalid face descriptor: must be a 512-dimensional vector' }, { status: 400 });
+        }
+
+        // Validate all values are numbers in reasonable range
+        if (!incomingDesc.every(v => typeof v === 'number' && isFinite(v))) {
+            return NextResponse.json({ error: 'Invalid face descriptor values' }, { status: 400 });
         }
 
         // Get the user's stored face descriptor
         const user = await prisma.user.findUnique({
             where: { id: session.userId },
-            select: { faceDescriptor: true, fullName: true },
+            select: { faceDescriptor: true },
         });
 
         if (!user) {
@@ -71,15 +94,18 @@ export async function POST(request: NextRequest) {
         const distance = euclideanDistance(incomingDesc, storedDesc);
         const verified = distance < FACE_MATCH_THRESHOLD;
 
-        console.log(`Face verification for ${user.fullName}: distance=${distance.toFixed(4)}, threshold=${FACE_MATCH_THRESHOLD}, verified=${verified}`);
+        // Security: Don't log user names with face verification results
+        // Only log generic info for debugging
+        console.log(`Face verification attempt: verified=${verified}, distance=${distance.toFixed(4)}`);
 
+        // Don't expose exact distance to prevent attackers from tuning spoofing attempts
         return NextResponse.json({
             verified,
-            distance: parseFloat(distance.toFixed(4)),
-            threshold: FACE_MATCH_THRESHOLD,
+            // Only return whether match was close, not exact distance
+            matchQuality: distance < 0.2 ? 'strong' : distance < FACE_MATCH_THRESHOLD ? 'acceptable' : 'poor',
             message: verified
-                ? `Face matched! Welcome, ${user.fullName}. (distance: ${distance.toFixed(4)})`
-                : `Face does NOT match registered user. Distance: ${distance.toFixed(4)} (threshold: ${FACE_MATCH_THRESHOLD}). Please try again or ensure you are the registered voter.`,
+                ? 'Face verification successful'
+                : 'Face verification failed. Please ensure proper lighting and face positioning.',
         });
     } catch (error) {
         console.error('Face verification error:', error);

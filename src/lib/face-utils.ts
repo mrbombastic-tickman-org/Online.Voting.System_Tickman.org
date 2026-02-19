@@ -1,38 +1,66 @@
 'use client';
 import { useRef, useState, useCallback, useEffect } from 'react';
-import * as faceapi from 'face-api.js';
+import type { Human, Config, Result } from '@vladmandic/human';
 
-let modelsLoaded = false;
-let modelsLoadPromise: Promise<void> | null = null;
+// ─── Singleton Human instance ───────────────────────────────────────────────
+let humanInstance: Human | null = null;
+let humanLoadPromise: Promise<Human> | null = null;
 
-async function loadModels() {
-    if (modelsLoaded) return;
-    if (modelsLoadPromise) {
-        await modelsLoadPromise;
-        return;
-    }
-    modelsLoadPromise = (async () => {
-        const MODEL_URL = '/models';
-        await Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-            faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
-            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-        ]);
-        modelsLoaded = true;
+const humanConfig: Partial<Config> = {
+    debug: false,
+    // Use WebAssembly backend — works on any CPU with no GPU needed
+    backend: 'wasm' as const,
+    // Warm up on load so first detection is fast
+    warmup: 'none',
+    // Only enable what we need: face detection + description
+    face: {
+        enabled: true,
+        detector: { enabled: true, rotation: true, maxDetected: 1, minConfidence: 0.5 },
+        mesh: { enabled: true },
+        attention: { enabled: false },
+        iris: { enabled: false },
+        description: { enabled: true, minConfidence: 0.5 }, // 512-dim embedding
+        emotion: { enabled: false },
+        antispoof: { enabled: false },
+        liveness: { enabled: false },
+    },
+    body: { enabled: false },
+    hand: { enabled: false },
+    object: { enabled: false },
+    gesture: { enabled: false },
+    segmentation: { enabled: false },
+};
+
+async function getHuman(): Promise<Human> {
+    if (humanInstance) return humanInstance;
+    if (humanLoadPromise) return humanLoadPromise;
+
+    humanLoadPromise = (async () => {
+        // Dynamic import so it only loads in the browser (not SSR)
+        const { Human: HumanClass } = await import('@vladmandic/human');
+        const h = new HumanClass(humanConfig);
+        await h.load();
+        humanInstance = h;
+        return h;
     })();
-    await modelsLoadPromise;
+
+    return humanLoadPromise;
 }
 
+// ─── React hook ─────────────────────────────────────────────────────────────
 export function useFaceDetection() {
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
-    const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'capturing' | 'detected' | 'no-face' | 'error'>('idle');
-    const [faceDescriptor, setFaceDescriptor] = useState<Float32Array | null>(null);
+
+    const [status, setStatus] = useState<
+        'idle' | 'loading' | 'ready' | 'capturing' | 'detected' | 'no-face' | 'error'
+    >('idle');
+    const [faceDescriptor, setFaceDescriptor] = useState<number[] | null>(null);
     const [capturedImage, setCapturedImage] = useState<string | null>(null);
     const [errorMsg, setErrorMsg] = useState('');
 
-    // Cleanup on unmount
+    // Stop camera on unmount
     useEffect(() => {
         return () => {
             if (streamRef.current) {
@@ -43,7 +71,7 @@ export function useFaceDetection() {
     }, []);
 
     const startCamera = useCallback(async () => {
-        // Stop any existing stream first
+        // Stop any existing stream
         if (streamRef.current) {
             streamRef.current.getTracks().forEach(t => t.stop());
             streamRef.current = null;
@@ -53,68 +81,41 @@ export function useFaceDetection() {
         setErrorMsg('');
 
         try {
-            console.log('Starting camera initialization...');
-            await loadModels();
-            console.log('Models loaded successfully');
+            console.log('[Human] Loading face models…');
+            await getHuman(); // preload models while camera starts
+            console.log('[Human] Models ready');
 
-            console.log('Requesting camera access...');
-            // Polyfill: attach legacy getUserMedia to mediaDevices if missing
-            if (!navigator.mediaDevices) {
-                (navigator as any).mediaDevices = {};
+            // Polyfill for older browsers
+            if (!navigator.mediaDevices?.getUserMedia) {
+                throw new Error('Camera not supported in this browser.');
             }
-            if (!navigator.mediaDevices.getUserMedia) {
-                navigator.mediaDevices.getUserMedia = (constraints: MediaStreamConstraints) => {
-                    const legacyGetUserMedia =
-                        (navigator as any).webkitGetUserMedia ||
-                        (navigator as any).mozGetUserMedia ||
-                        (navigator as any).msGetUserMedia;
-                    if (!legacyGetUserMedia) {
-                        return Promise.reject(new Error(
-                            `Camera not available. Open http://localhost:3000 in your browser instead of ${window.location.origin}`
-                        ));
-                    }
-                    return new Promise((resolve, reject) => {
-                        legacyGetUserMedia.call(navigator, constraints, resolve, reject);
-                    });
-                };
-            }
-            // Try simpler constraints first to maximize compatibility
-            const mediaStream = await navigator.mediaDevices.getUserMedia({
-                video: true // Simple constraint to just get *any* video
-            });
-            console.log('Camera access granted:', mediaStream.id);
 
+            const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            console.log('[Human] Camera access granted');
             streamRef.current = mediaStream;
 
-            // Wait a tick to ensure the video element is rendered
+            // Give the video element a tick to render
             await new Promise(resolve => setTimeout(resolve, 100));
 
-            if (videoRef.current) {
-                console.log('Attaching stream to video element');
-                videoRef.current.srcObject = mediaStream;
-                await videoRef.current.play().catch(e => console.error('Error playing video:', e));
-                console.log('Video playing');
-            } else {
-                console.error('Video reference is null!');
-                throw new Error('Video element not found');
-            }
+            if (!videoRef.current) throw new Error('Video element not found');
+            videoRef.current.srcObject = mediaStream;
+            await videoRef.current.play();
+            console.log('[Human] Video playing');
 
             setStatus('ready');
-        } catch (err: any) {
-            console.error('Camera start error:', err);
+        } catch (err: unknown) {
+            console.error('[Human] Camera start error:', err);
             setStatus('error');
-            // enhance error message
-            let msg = 'Camera error';
-            if (err?.name === 'NotAllowedError' || err?.message?.includes('Permission')) {
-                msg = 'Camera permission denied. Please allow access.';
-            } else if (err?.name === 'NotFoundError') {
-                msg = 'No camera found on this device.';
-            } else if (err?.name === 'NotReadableError') {
-                msg = 'Camera is in use by another application.';
+            const e = err as { name?: string; message?: string };
+            if (e?.name === 'NotAllowedError') {
+                setErrorMsg('Camera permission denied. Please allow access.');
+            } else if (e?.name === 'NotFoundError') {
+                setErrorMsg('No camera found on this device.');
+            } else if (e?.name === 'NotReadableError') {
+                setErrorMsg('Camera is in use by another application.');
             } else {
-                msg = `Camera error: ${err?.message || 'Unknown error'}`;
+                setErrorMsg(`Camera error: ${e?.message || 'Unknown error'}`);
             }
-            setErrorMsg(msg);
         }
     }, []);
 
@@ -142,31 +143,32 @@ export function useFaceDetection() {
         setCapturedImage(dataUrl);
 
         try {
-            const detection = await faceapi
-                .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 }))
-                .withFaceLandmarks(true)
-                .withFaceDescriptor();
+            const human = await getHuman();
+            console.log('[Human] Running detection…');
+            const result: Result = await human.detect(video);
 
-            if (!detection) {
+            const face = result.face?.[0];
+            if (!face || !face.embedding || face.embedding.length === 0) {
                 setStatus('no-face');
                 setErrorMsg('No face detected. Make sure your face is clearly visible and well-lit.');
                 setCapturedImage(null);
                 return null;
             }
 
-            // Stop camera after successful capture
             stopCamera();
-
-            setFaceDescriptor(detection.descriptor);
+            const descriptor = Array.from(face.embedding) as number[];
+            setFaceDescriptor(descriptor);
             setStatus('detected');
 
+            console.log(`[Human] Face detected — embedding length: ${descriptor.length}, confidence: ${face.faceScore?.toFixed(3)}`);
+
             return {
-                descriptor: Array.from(detection.descriptor),
+                descriptor,
                 image: dataUrl,
-                score: detection.detection.score,
+                score: face.faceScore ?? 0,
             };
         } catch (err) {
-            console.error('Face detection error:', err);
+            console.error('[Human] Detection error:', err);
             setStatus('error');
             setErrorMsg('Face detection failed. Please ensure good lighting and try again.');
             return null;
@@ -195,6 +197,8 @@ export function useFaceDetection() {
     };
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 export function euclideanDistance(desc1: number[], desc2: number[]): number {
     if (desc1.length !== desc2.length) return Infinity;
     let sum = 0;
@@ -204,4 +208,6 @@ export function euclideanDistance(desc1: number[], desc2: number[]): number {
     return Math.sqrt(sum);
 }
 
-export const FACE_MATCH_THRESHOLD = 0.6;
+// @vladmandic/human 512-dim embeddings: threshold is tighter than face-api.js
+// Typical match: ~0.3–0.4, non-match: >0.5
+export const FACE_MATCH_THRESHOLD = 0.4;
