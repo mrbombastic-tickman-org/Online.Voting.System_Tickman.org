@@ -16,7 +16,7 @@ function euclideanDistance(desc1: number[], desc2: number[]): number {
 //   Same person: Euclidean distance ~0.3–0.45
 //   Different person: Euclidean distance >0.6
 // Threshold of 0.6 provides good balance
-const FACE_MATCH_THRESHOLD = 0.6;
+const FACE_MATCH_THRESHOLD = 0.45;
 
 // Rate limit: 50 face verification attempts per minute (relaxed for development)
 const FACE_RATE_LIMIT = {

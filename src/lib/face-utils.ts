@@ -141,7 +141,7 @@ export function useFaceDetection() {
             const detection = await fapi
                 .detectSingleFace(video, new fapi.TinyFaceDetectorOptions({
                     inputSize: 416,
-                    scoreThreshold: 0.5,
+                    scoreThreshold: 0.6, // Increased confidence required
                 }))
                 .withFaceLandmarks(true) // useTinyModel = true
                 .withFaceDescriptor();
@@ -208,4 +208,4 @@ export function euclideanDistance(desc1: number[], desc2: number[]): number {
 
 // face-api.js 128-dim embeddings:
 // Same person: ~0.3–0.4, Different person: >0.6
-export const FACE_MATCH_THRESHOLD = 0.6;
+export const FACE_MATCH_THRESHOLD = 0.45;
