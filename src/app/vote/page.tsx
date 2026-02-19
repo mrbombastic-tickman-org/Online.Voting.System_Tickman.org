@@ -220,7 +220,7 @@ export default function VotePage() {
                     candidateId: selectedCandidate,
                     electionId: elections[0].id,
                     // Include biometric data based on type
-                    faceDescriptor: faceResult?.descriptor,
+                    faceImage: faceResult?.image,
                     fingerprintAssertion: fingerprintResult,
                     biometricType: userBiometricType,
                 }),

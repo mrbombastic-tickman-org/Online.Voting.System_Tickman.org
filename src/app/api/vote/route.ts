@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'crypto';
 import prisma from '@/lib/prisma';
 import { getSession, getClientIP, checkRateLimit } from '@/lib/auth';
+import { facePlusPlus } from '@/lib/faceplusplus';
 
 // Rate limit: 10 vote attempts per minute per IP
 const VOTE_RATE_LIMIT = {
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
-        const { candidateId, electionId, faceDescriptor, fingerprintAssertion, biometricType = 'face' } = body;
+        const { candidateId, electionId, faceImage, fingerprintAssertion, biometricType = 'face' } = body;
 
         // Validate format (UUID or Slug) - alphanumeric with hyphens/underscores
         // Seeded data might use 'election-2026' etc.
@@ -43,8 +44,8 @@ export async function POST(request: NextRequest) {
 
         // Biometric verification is REQUIRED for vote
         if (biometricType === 'face') {
-            if (!faceDescriptor || !Array.isArray(faceDescriptor) || faceDescriptor.length < 64) {
-                return NextResponse.json({ error: 'Valid face descriptor is required' }, { status: 400 });
+            if (!faceImage || typeof faceImage !== 'string') {
+                return NextResponse.json({ error: 'Face image is required for verification' }, { status: 400 });
             }
         } else if (biometricType === 'fingerprint') {
             if (!fingerprintAssertion) {
@@ -92,21 +93,27 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ error: 'No face biometric registered' }, { status: 400 });
             }
 
-            let storedDescriptor: number[];
-            try {
-                storedDescriptor = JSON.parse(user.faceDescriptor);
-            } catch {
-                return NextResponse.json({ error: 'Stored face data corrupted' }, { status: 500 });
+            const storedToken = user.faceDescriptor;
+
+            // Check if it's a legacy JSON-array descriptor (old face-api.js data)
+            if (storedToken.trim().startsWith('[')) {
+                return NextResponse.json({
+                    error: 'Legacy face data detected. Please re-register to upgrade to Face++.',
+                    verified: false
+                }, { status: 400 });
             }
 
-            // Calculate Euclidean distance
-            const distance = Math.sqrt(
-                faceDescriptor.reduce((sum: number, val: number, i: number) =>
-                    sum + Math.pow(val - (storedDescriptor[i] || 0), 2), 0)
-            );
+            // Use Face++ to compare the stored token with the live image
+            const confidence = await facePlusPlus.compare(storedToken, faceImage);
+            if (confidence < 0) {
+                return NextResponse.json({
+                    error: 'Face verification service error. Please try again.',
+                    verified: false
+                }, { status: 500 });
+            }
 
-            const FACE_THRESHOLD = 0.6;
-            if (distance >= FACE_THRESHOLD) {
+            const FACE_THRESHOLD = 75;
+            if (confidence < FACE_THRESHOLD) {
                 return NextResponse.json({
                     error: 'Face verification failed. Please try again.',
                     verified: false
