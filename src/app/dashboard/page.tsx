@@ -6,10 +6,10 @@ import LoadingSpinner from '@/components/LoadingSpinner';
 
 function LogoutButton({ onLogout }: { onLogout: () => void }) {
     return (
-        <button 
+        <button
             onClick={onLogout}
             className="btn btn-danger btn-sm"
-            style={{ marginTop: '16px' }}
+            style={{ marginTop: '12px' }}
         >
             Logout
         </button>
@@ -74,7 +74,7 @@ export default function DashboardPage() {
                 <div className="card animate-in text-center" style={{ padding: 60 }}>
                     <div style={{ fontSize: '3rem' }} aria-hidden="true">🔒</div>
                     <h2 className="mt-20">Session Expired</h2>
-                    <p className="mt-12">Please login again to continue.</p>
+                    <p className="mt-12" style={{ color: 'var(--text-muted)' }}>Please login again to continue.</p>
                     <Link href="/login" className="btn btn-primary mt-24">Go to Login</Link>
                 </div>
             </div>
@@ -84,17 +84,17 @@ export default function DashboardPage() {
     return (
         <div className="container page-wrapper">
             <div className="page-header">
-                <h1 className="page-title">👋 Welcome, {user.fullName}</h1>
+                <h1 className="page-title">Welcome, {user.fullName} 👋</h1>
                 <p className="page-subtitle">Your voter dashboard</p>
             </div>
 
             {/* User Info Card */}
             <div className="grid-2 mb-32">
                 <div className="card">
-                    <h3 className="mb-16" style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>
+                    <h3 className="mb-16" style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontWeight: 600 }}>
                         Voter Profile
                     </h3>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                         <div>
                             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Full Name</span>
                             <p style={{ fontWeight: 600 }}>{user.fullName}</p>
@@ -105,7 +105,7 @@ export default function DashboardPage() {
                         </div>
                         <div>
                             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Verification Status</span>
-                            <p>
+                            <p className="mt-12">
                                 {user.verified ? (
                                     <span className="badge badge-success">✅ Verified</span>
                                 ) : (
@@ -117,7 +117,7 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="card">
-                    <h3 className="mb-16" style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>
+                    <h3 className="mb-16" style={{ fontSize: '0.9rem', color: 'var(--text-muted)', fontWeight: 600 }}>
                         Quick Actions
                     </h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -141,7 +141,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Elections Status */}
-            <h2 className="mb-16" style={{ fontSize: '1.3rem', fontWeight: 700 }}>Active Elections</h2>
+            <h2 className="mb-16" style={{ fontSize: '1.2rem', fontWeight: 700 }}>Active Elections</h2>
             {elections.length === 0 ? (
                 <div className="card text-center" style={{ padding: 40 }}>
                     <p style={{ color: 'var(--text-muted)' }}>No active elections at the moment.</p>
@@ -150,7 +150,7 @@ export default function DashboardPage() {
                 elections.map((e) => (
                     <div key={e.id} className="card mb-16">
                         <div className="flex-between mb-16" style={{ flexWrap: 'wrap', gap: 8 }}>
-                            <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{e.title}</h3>
+                            <h3 style={{ fontSize: '1.05rem', fontWeight: 700 }}>{e.title}</h3>
                             {e.userVotedFor ? (
                                 <span className="badge badge-success">✅ Voted</span>
                             ) : (
@@ -162,7 +162,7 @@ export default function DashboardPage() {
                         </p>
                         <div className="flex-gap-16" style={{ alignItems: 'center' }}>
                             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                Total Votes: <strong style={{ color: 'var(--saffron)' }}>{e.totalVotes}</strong>
+                                Total Votes: <strong style={{ color: 'var(--teal-dark)' }}>{e.totalVotes}</strong>
                             </span>
                             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                                 Candidates: <strong>{e.candidates.length}</strong>

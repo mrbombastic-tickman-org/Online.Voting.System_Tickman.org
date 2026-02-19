@@ -21,7 +21,6 @@ export default function Navbar() {
             .catch(() => setSession({ authenticated: false }));
     }, [pathname]);
 
-    // Close menu on route change
     useEffect(() => {
         setMenuOpen(false);
     }, [pathname]);
@@ -36,15 +35,7 @@ export default function Navbar() {
         <nav className="navbar" role="navigation" aria-label="Main navigation">
             <div className="navbar-container">
                 <Link href="/" className="navbar-brand" aria-label="VoteSecure Home">
-                    <span style={{
-                        background: 'var(--lime)',
-                        padding: '4px 12px',
-                        borderRadius: 'var(--radius-pill)',
-                        border: '3px solid black',
-                        boxShadow: '4px 4px 0 0 #000'
-                    }}>
-                        VOTE_SECURE
-                    </span>
+                    VoteSecure
                 </Link>
 
                 <button
@@ -58,7 +49,6 @@ export default function Navbar() {
                     <span></span>
                 </button>
 
-                {/* Mobile overlay */}
                 {menuOpen && (
                     <div
                         className="nav-overlay open"

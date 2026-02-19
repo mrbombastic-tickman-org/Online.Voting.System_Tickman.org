@@ -200,8 +200,8 @@ export default function RegisterPage() {
     return (
         <div className="container page-wrapper">
             <div className="text-center mb-40">
-                <h1 className="page-title">NEW VOTER</h1>
-                <p className="page-subtitle" style={{ transform: 'rotate(1deg)' }}>
+                <h1 className="page-title">New Voter</h1>
+                <p className="page-subtitle">
                     Create your secure digital ID
                 </p>
             </div>
@@ -506,7 +506,7 @@ export default function RegisterPage() {
                                 className="btn btn-success btn-lg"
                                 onClick={handleRegister}
                                 disabled={loading || (biometricType === 'face' ? !faceData : !fingerprintData)}
-                                style={{ flex: 2, boxShadow: '6px 6px 0 0 #000' }}
+                                style={{ flex: 2 }}
                                 aria-busy={loading}
                             >
                                 {loading ? 'Creating ID...' : 'Create Voter ID →'}

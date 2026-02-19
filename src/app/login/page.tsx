@@ -38,7 +38,7 @@ export default function LoginPage() {
                 </div>
 
                 <h1 className="auth-title">Welcome Back</h1>
-                <p className="auth-subtitle">Enter your secure credentials</p>
+                <p className="auth-subtitle">Enter your credentials to continue</p>
 
                 {error && (
                     <div className="alert alert-error mb-24" role="alert">
@@ -80,7 +80,7 @@ export default function LoginPage() {
                         disabled={loading}
                         aria-busy={loading}
                     >
-                        {loading ? <span className="spinner" style={{ width: 24, height: 24 }} /> : 'LOGIN NOW'}
+                        {loading ? <span className="spinner" style={{ width: 22, height: 22 }} /> : 'Login'}
                     </button>
                 </form>
 

@@ -307,7 +307,7 @@ export default function VotePage() {
     return (
         <div className="container page-wrapper">
             <div className="text-center mb-40">
-                <h1 className="page-title vote-header-title">CAST YOUR VOTE</h1>
+                <h1 className="page-title vote-header-title">Cast Your Vote</h1>
                 <p className="page-subtitle vote-subtitle">
                     {election ? election.title : 'No Active Elections'}
                 </p>
@@ -324,7 +324,7 @@ export default function VotePage() {
             )}
 
             {alreadyVoted && (
-                <div className="card animate-in text-center" style={{ padding: 40, background: '#f0f0f0' }}>
+                <div className="card animate-in text-center" style={{ padding: 40 }}>
                     <div style={{ fontSize: '3rem' }} aria-hidden="true">🚫</div>
                     <h2>You have already voted.</h2>
                     <p>One person, one vote. Thank you for participating.</p>
@@ -531,21 +531,21 @@ export default function VotePage() {
                 <div style={{ maxWidth: 520, margin: '0 auto' }} className="animate-in">
                     <div className="card confirm-card">
                         <div style={{ fontSize: '4rem', marginBottom: 20 }} aria-hidden="true">🗳️</div>
-                        <div className="alert alert-success mb-24" style={{ background: '#dff9fb' }}>
+                        <div className="alert alert-success mb-24">
                             <strong>{verifyMessage}</strong>
                         </div>
 
                         <h2 className="mb-16">Confirm Selection</h2>
-                        <div style={{ background: '#f0f0f0', padding: 20, borderRadius: 12, border: '2px solid black', marginBottom: 24 }}>
-                            Vote for: <strong style={{ fontSize: '1.2rem', textTransform: 'uppercase' }}>{election?.candidates.find((c) => c.id === selectedCandidate)?.name}</strong>
+                        <div style={{ background: 'var(--bg-primary)', padding: 20, borderRadius: 16, border: '1px solid #EDF2F7', marginBottom: 24 }}>
+                            Vote for: <strong style={{ fontSize: '1.2rem' }}>{election?.candidates.find((c) => c.id === selectedCandidate)?.name}</strong>
                             <br />
-                            <span style={{ color: '#666' }}>{election?.candidates.find((c) => c.id === selectedCandidate)?.party}</span>
+                            <span style={{ color: 'var(--text-muted)' }}>{election?.candidates.find((c) => c.id === selectedCandidate)?.party}</span>
                         </div>
 
                         <div className="flex-gap-16" style={{ justifyContent: 'center' }}>
                             <button className="btn btn-secondary" onClick={goBack}>Back</button>
-                            <button className="btn btn-success btn-lg" onClick={handleVote} disabled={voting} aria-busy={voting} style={{ boxShadow: '4px 4px 0 0 black' }}>
-                                {voting ? 'Encrypting...' : 'CONFIRM VOTE'}
+                            <button className="btn btn-success btn-lg" onClick={handleVote} disabled={voting} aria-busy={voting}>
+                                {voting ? 'Encrypting...' : 'Confirm Vote'}
                             </button>
                         </div>
                     </div>
