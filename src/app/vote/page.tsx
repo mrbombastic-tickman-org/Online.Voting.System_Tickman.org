@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFaceDetection } from '@/lib/face-utils';
+import { useFingerprint, checkBiometricAvailability } from '@/lib/fingerprint-utils';
 import StepIndicator from '@/components/StepIndicator';
 import LoadingSpinner from '@/components/LoadingSpinner';
 
@@ -28,12 +29,6 @@ interface UserSession {
     verified: boolean;
 }
 
-const VOTE_STEPS = [
-    { label: 'Choose' },
-    { label: 'Verify' },
-    { label: 'Confirm' },
-];
-
 export default function VotePage() {
     const router = useRouter();
     const [elections, setElections] = useState<Election[]>([]);
@@ -44,40 +39,79 @@ export default function VotePage() {
     const [voteSuccess, setVoteSuccess] = useState(false);
     const [user, setUser] = useState<UserSession | null>(null);
 
-    const [step, setStep] = useState<'select' | 'face' | 'confirm'>('select');
-    const [faceVerified, setFaceVerified] = useState(false);
-    const [faceVerifying, setFaceVerifying] = useState(false);
-    const [verifyMessage, setVerifyMessage] = useState('');
-    const [faceResult, setFaceResult] = useState<{ descriptor: number[]; image: string } | null>(null);
+    // Biometric type
+    const [userBiometricType, setUserBiometricType] = useState<'face' | 'fingerprint'>('face');
+    const [fingerprintAvailable, setFingerprintAvailable] = useState(false);
 
+    const [step, setStep] = useState<'select' | 'verify' | 'confirm'>('select');
+    const [biometricVerified, setBiometricVerified] = useState(false);
+    const [biometricVerifying, setBiometricVerifying] = useState(false);
+    const [verifyMessage, setVerifyMessage] = useState('');
+
+    // Face verification
+    const [faceResult, setFaceResult] = useState<{ descriptor: number[]; image: string } | null>(null);
     const face = useFaceDetection();
 
-    const stepIndex = step === 'select' ? 1 : step === 'face' ? 2 : 3;
+    // Fingerprint verification
+    const fingerprint = useFingerprint();
+    const [fingerprintResult, setFingerprintResult] = useState<string | null>(null);
+
+    const stepIndex = step === 'select' ? 1 : step === 'verify' ? 2 : 3;
+
+    // Dynamic step label
+    const VOTE_STEPS = [
+        { label: 'Choose' },
+        { label: userBiometricType === 'face' ? 'Face Verify' : 'Fingerprint' },
+        { label: 'Confirm' },
+    ];
 
     useEffect(() => {
+        // Check session
         fetch('/api/auth/session')
             .then((r) => r.json())
             .then((data) => {
                 if (!data.authenticated) { router.push('/login'); return; }
                 setUser(data.user);
             });
+
+        // Fetch elections
         fetch('/api/elections')
             .then((r) => r.json())
             .then((data) => { setElections(data.elections || []); setLoading(false); })
             .catch(() => setLoading(false));
+
+        // Check biometric availability
+        checkBiometricAvailability().then((status) => {
+            setFingerprintAvailable(status.available);
+        });
+
+        // Check user's registered biometric type
+        fetch('/api/verify-fingerprint')
+            .then((r) => r.json())
+            .then((data) => {
+                if (data.biometricType) {
+                    setUserBiometricType(data.biometricType);
+                }
+            })
+            .catch(() => { });
     }, [router]);
 
-    const goToFaceStep = async () => {
+    const goToVerifyStep = async () => {
         if (!selectedCandidate) return;
-        setStep('face');
+        setStep('verify');
         setError('');
-        setFaceVerified(false);
+        setBiometricVerified(false);
         setFaceResult(null);
+        setFingerprintResult(null);
         setVerifyMessage('');
-        setTimeout(() => { face.startCamera(); }, 100);
+
+        if (userBiometricType === 'face') {
+            setTimeout(() => { face.startCamera(); }, 100);
+        }
     };
 
-    const handleCapture = async () => {
+    // Face verification handlers
+    const handleFaceCapture = async () => {
         setError('');
         const result = await face.captureAndDetect();
         if (result) {
@@ -87,7 +121,7 @@ export default function VotePage() {
     };
 
     const verifyFace = async (descriptor: number[]) => {
-        setFaceVerifying(true);
+        setBiometricVerifying(true);
         setError('');
         setVerifyMessage('');
         try {
@@ -98,31 +132,84 @@ export default function VotePage() {
             });
             const data = await res.json();
             if (data.verified) {
-                setFaceVerified(true);
+                setBiometricVerified(true);
                 setVerifyMessage(data.message);
                 setStep('confirm');
             } else {
                 setError(data.message || data.error || 'Identity Mismatch!');
-                setFaceVerified(false);
+                setBiometricVerified(false);
             }
         } catch {
             setError('Verification Error');
         } finally {
-            setFaceVerifying(false);
+            setBiometricVerifying(false);
         }
     };
 
-    const retakePhoto = async () => {
-        setFaceResult(null);
-        setFaceVerified(false);
+    // Fingerprint verification handler
+    const handleFingerprintVerify = async () => {
+        setBiometricVerifying(true);
         setError('');
         setVerifyMessage('');
-        face.reset();
-        await face.startCamera();
+
+        try {
+            // Get stored credential ID from server
+            const statusRes = await fetch('/api/verify-fingerprint');
+            const statusData = await statusRes.json();
+
+            if (!statusData.hasFingerprint) {
+                setError('No fingerprint registered. Please use face verification.');
+                setBiometricVerifying(false);
+                return;
+            }
+
+            const result = await fingerprint.verify();
+
+            if (result.success && result.assertionData) {
+                // Send assertion to server for verification
+                const verifyRes = await fetch('/api/verify-fingerprint', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ assertionData: result.assertionData }),
+                });
+                const verifyData = await verifyRes.json();
+
+                if (verifyData.verified) {
+                    setFingerprintResult(result.assertionData);
+                    setBiometricVerified(true);
+                    setVerifyMessage(verifyData.message || 'Fingerprint verified successfully');
+                    setStep('confirm');
+                } else {
+                    setError(verifyData.error || 'Fingerprint verification failed');
+                }
+            } else {
+                setError(result.error || 'Fingerprint verification failed');
+            }
+        } catch (err) {
+            setError('Verification error occurred');
+        } finally {
+            setBiometricVerifying(false);
+        }
+    };
+
+    const retakeBiometric = async () => {
+        setFaceResult(null);
+        setFingerprintResult(null);
+        setBiometricVerified(false);
+        setError('');
+        setVerifyMessage('');
+
+        if (userBiometricType === 'face') {
+            face.reset();
+            await face.startCamera();
+        } else {
+            fingerprint.reset();
+        }
     };
 
     const handleVote = async () => {
-        if (!selectedCandidate || !elections[0] || !faceVerified || !faceResult) return;
+        if (!selectedCandidate || !elections[0] || !biometricVerified) return;
+
         setVoting(true);
         setError('');
         try {
@@ -132,7 +219,10 @@ export default function VotePage() {
                 body: JSON.stringify({
                     candidateId: selectedCandidate,
                     electionId: elections[0].id,
-                    faceImage: faceResult.image,
+                    // Include biometric data based on type
+                    faceDescriptor: faceResult?.descriptor,
+                    fingerprintAssertion: fingerprintResult,
+                    biometricType: userBiometricType,
                 }),
             });
             const data = await res.json();
@@ -148,15 +238,18 @@ export default function VotePage() {
     const goBack = () => {
         face.stopCamera();
         if (step === 'confirm') {
-            setStep('face');
+            setStep('verify');
             setFaceResult(null);
-            setFaceVerified(false);
+            setFingerprintResult(null);
+            setBiometricVerified(false);
             setVerifyMessage('');
-        } else if (step === 'face') {
+        } else if (step === 'verify') {
             setStep('select');
             setFaceResult(null);
-            setFaceVerified(false);
+            setFingerprintResult(null);
+            setBiometricVerified(false);
             face.reset();
+            fingerprint.reset();
         }
         setError('');
     };
@@ -264,92 +357,177 @@ export default function VotePage() {
                             </div>
                         ))}
                     </div>
+
+                    {/* Biometric type selector */}
+                    <div className="text-center mt-24" style={{ maxWidth: 400, margin: '24px auto' }}>
+                        <p style={{ marginBottom: '12px', fontWeight: 600 }}>Verify with:</p>
+                        <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                            <button
+                                type="button"
+                                className={`btn ${userBiometricType === 'face' ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setUserBiometricType('face')}
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                            >
+                                <span>👤</span> Face
+                            </button>
+                            <button
+                                type="button"
+                                className={`btn ${userBiometricType === 'fingerprint' ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setUserBiometricType('fingerprint')}
+                                disabled={!fingerprintAvailable}
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                                title={!fingerprintAvailable ? 'Fingerprint not available' : ''}
+                            >
+                                <span>👆</span> Fingerprint
+                            </button>
+                        </div>
+                    </div>
+
                     <div className="text-center mt-32">
-                        <button className="btn btn-primary btn-lg vote-next-btn" disabled={!selectedCandidate} onClick={goToFaceStep}>
+                        <button className="btn btn-primary btn-lg vote-next-btn" disabled={!selectedCandidate} onClick={goToVerifyStep}>
                             Next Step →
                         </button>
                     </div>
                 </>
             )}
 
-            {/* Step 2: Face Verification */}
-            {step === 'face' && (
+            {/* Step 2: Biometric Verification */}
+            {step === 'verify' && (
                 <div style={{ maxWidth: 520, margin: '0 auto' }} className="animate-in">
                     <div className="card face-verify-card">
-                        <h2 className="text-center mb-16">Verify Identity</h2>
-                        <p className="text-center mb-24">We need to confirm it&apos;s really you.</p>
+                        <h2 className="text-center mb-16">
+                            {userBiometricType === 'face' ? 'Face Verification' : 'Fingerprint Verification'}
+                        </h2>
+                        <p className="text-center mb-24">We need to confirm it's really you.</p>
 
-                        {!faceResult && (
-                            <div className="webcam-container" style={{ display: (face.status === 'idle' || face.status === 'loading') ? 'none' : 'block' }}>
-                                <video ref={face.videoRef} autoPlay playsInline muted />
-                                <canvas ref={face.canvasRef} style={{ display: 'none' }} />
-                            </div>
-                        )}
-
-                        {(face.status === 'idle' || face.status === 'loading') && !faceResult && (
-                            <div className="face-loading-placeholder" role="status" aria-live="polite" aria-busy="true">
-                                <div className="spinner mb-24" aria-hidden="true" />
-                                <h3>Starting Camera...</h3>
-                                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '12px' }}>
-                                    Please allow camera access when prompted
-                                </p>
-                            </div>
-                        )}
-
-                        {(face.status === 'ready' || face.status === 'no-face') && !faceResult && (
+                        {userBiometricType === 'face' ? (
                             <>
-                                {face.status === 'no-face' && (
-                                    <div className="alert alert-error mt-20" role="alert">No face detected!</div>
+                                {/* Face Verification UI */}
+                                {!faceResult && (
+                                    <div className="webcam-container" style={{ display: (face.status === 'idle' || face.status === 'loading') ? 'none' : 'block' }}>
+                                        <video ref={face.videoRef} autoPlay playsInline muted />
+                                        <canvas ref={face.canvasRef} style={{ display: 'none' }} />
+                                    </div>
                                 )}
-                                <div className="text-center mt-24 flex-gap-16" style={{ justifyContent: 'center' }}>
-                                    <button className="btn btn-secondary" onClick={goBack}>Cancel</button>
-                                    <button className="btn btn-primary btn-lg" onClick={handleCapture}>Scan Face 📸</button>
+
+                                {(face.status === 'idle' || face.status === 'loading') && !faceResult && (
+                                    <div className="face-loading-placeholder" role="status" aria-live="polite" aria-busy="true">
+                                        <div className="spinner mb-24" aria-hidden="true" />
+                                        <h3>Starting Camera...</h3>
+                                        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '12px' }}>
+                                            Please allow camera access when prompted
+                                        </p>
+                                    </div>
+                                )}
+
+                                {(face.status === 'ready' || face.status === 'no-face') && !faceResult && (
+                                    <>
+                                        {face.status === 'no-face' && (
+                                            <div className="alert alert-error mt-20" role="alert">No face detected!</div>
+                                        )}
+                                        <div className="text-center mt-24 flex-gap-16" style={{ justifyContent: 'center' }}>
+                                            <button className="btn btn-secondary" onClick={goBack}>Cancel</button>
+                                            <button className="btn btn-primary btn-lg" onClick={handleFaceCapture}>Scan Face 📸</button>
+                                        </div>
+                                    </>
+                                )}
+
+                                {face.status === 'capturing' && (
+                                    <div className="text-center" style={{ padding: 40 }}>
+                                        <div className="spinner" aria-hidden="true" />
+                                        <p>Verifying...</p>
+                                    </div>
+                                )}
+
+                                {faceResult && (
+                                    <>
+                                        <div className="captured-preview" style={{ borderRadius: 20 }}>
+                                            <img src={faceResult.image} alt="Captured face for verification" />
+                                        </div>
+                                        {biometricVerifying && (
+                                            <div className="text-center mt-24" role="status" aria-live="polite">
+                                                <div className="spinner" style={{ width: 30, height: 30, marginBottom: 10 }} aria-hidden="true" />
+                                                <p><strong>Checking Biometrics...</strong></p>
+                                            </div>
+                                        )}
+                                        {!biometricVerifying && !biometricVerified && (
+                                            <div className="text-center mt-24 flex-gap-16" style={{ justifyContent: 'center' }}>
+                                                <button className="btn btn-secondary" onClick={goBack}>Cancel</button>
+                                                <button className="btn btn-primary" onClick={retakeBiometric}>Try Again</button>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+
+                                {face.status === 'error' && (
+                                    <div className="text-center" style={{ padding: 20 }} role="alert" aria-live="assertive">
+                                        <div className="alert alert-error">{face.errorMsg}</div>
+                                        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '12px', marginBottom: '16px' }}>
+                                            Make sure you have granted camera permissions in your browser settings.
+                                        </p>
+                                        <button className="btn btn-primary mt-12" onClick={() => face.startCamera()}>Restart Camera</button>
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <>
+                                {/* Fingerprint Verification UI */}
+                                <div className="text-center" style={{ padding: '40px 20px' }}>
+                                    <div style={{ fontSize: '4rem', marginBottom: '20px' }}>👆</div>
+
+                                    {!fingerprintResult && fingerprint.status !== 'verifying' && !biometricVerifying && (
+                                        <>
+                                            <p style={{ marginBottom: '20px', color: 'var(--text-muted)' }}>
+                                                Click the button below and place your finger on the sensor when prompted.
+                                            </p>
+                                            <button
+                                                className="btn btn-primary btn-lg"
+                                                onClick={handleFingerprintVerify}
+                                            >
+                                                Verify Fingerprint
+                                            </button>
+                                        </>
+                                    )}
+
+                                    {(fingerprint.status === 'verifying' || biometricVerifying) && (
+                                        <>
+                                            <div className="spinner" style={{ margin: '0 auto 20px' }} aria-hidden="true" />
+                                            <p><strong>Place your finger on the sensor...</strong></p>
+                                        </>
+                                    )}
+
+                                    {fingerprintResult && biometricVerified && (
+                                        <div className="alert alert-success">
+                                            <span aria-hidden="true">✅</span> Fingerprint Verified!
+                                        </div>
+                                    )}
+
+                                    {fingerprint.status === 'error' && (
+                                        <div className="alert alert-error" style={{ marginTop: '20px' }}>
+                                            {fingerprint.error}
+                                        </div>
+                                    )}
                                 </div>
+
+                                {!fingerprintAvailable && (
+                                    <div className="alert alert-error text-center">
+                                        Fingerprint authentication is not available on this device.
+                                    </div>
+                                )}
                             </>
                         )}
 
-                        {face.status === 'capturing' && (
-                            <div className="text-center" style={{ padding: 40 }}>
-                                <div className="spinner" aria-hidden="true" />
-                                <p>Verifying...</p>
-                            </div>
-                        )}
-
-                        {faceResult && (
-                            <>
-                                <div className="captured-preview" style={{ borderRadius: 20 }}>
-                                    <img src={faceResult.image} alt="Captured face for verification" />
-                                </div>
-                                {faceVerifying && (
-                                    <div className="text-center mt-24" role="status" aria-live="polite">
-                                        <div className="spinner" style={{ width: 30, height: 30, marginBottom: 10 }} aria-hidden="true" />
-                                        <p><strong>Checking Biometrics...</strong></p>
-                                    </div>
-                                )}
-                                {!faceVerifying && !faceVerified && (
-                                    <div className="text-center mt-24 flex-gap-16" style={{ justifyContent: 'center' }}>
-                                        <button className="btn btn-secondary" onClick={goBack}>Cancel</button>
-                                        <button className="btn btn-primary" onClick={retakePhoto}>Try Again</button>
-                                    </div>
-                                )}
-                            </>
-                        )}
-
-                        {face.status === 'error' && (
-                            <div className="text-center" style={{ padding: 20 }} role="alert" aria-live="assertive">
-                                <div className="alert alert-error">{face.errorMsg}</div>
-                                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '12px', marginBottom: '16px' }}>
-                                    Make sure you have granted camera permissions in your browser settings.
-                                </p>
-                                <button className="btn btn-primary mt-12" onClick={() => face.startCamera()}>Restart Camera</button>
-                            </div>
-                        )}
+                        <div className="text-center mt-24">
+                            <button className="btn btn-secondary btn-sm" onClick={goBack}>
+                                Cancel
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
 
             {/* Step 3: Confirm */}
-            {step === 'confirm' && faceVerified && (
+            {step === 'confirm' && biometricVerified && (
                 <div style={{ maxWidth: 520, margin: '0 auto' }} className="animate-in">
                     <div className="card confirm-card">
                         <div style={{ fontSize: '4rem', marginBottom: 20 }} aria-hidden="true">🗳️</div>

@@ -19,19 +19,22 @@ model GovernmentRecord {
 }
 
 model User {
-  id               String           @id @default(uuid())
-  email            String           @unique
-  passwordHash     String
-  fullName         String
-  documentNumber   String           @unique
-  faceImageUrl     String?
-  verified         Boolean          @default(false)
-  isAdmin          Boolean          @default(false)
-  registeredAt     DateTime         @default(now())
-  faceDescriptor   String?
-  governmentRecord GovernmentRecord @relation(fields: [documentNumber], references: [documentNumber])
-  votes            Vote[]
-  sessions         Session[]
+  id                    String           @id @default(uuid())
+  email                 String           @unique
+  passwordHash          String
+  fullName              String
+  documentNumber        String           @unique
+  faceImageUrl          String?
+  verified              Boolean          @default(false)
+  isAdmin               Boolean          @default(false)
+  registeredAt          DateTime         @default(now())
+  faceDescriptor        String?
+  biometricType         String?          @default("face") // "face" or "fingerprint"
+  fingerprintCredential String?          // WebAuthn credential ID
+  fingerprintPublicKey  String?          // Public key for verification
+  governmentRecord      GovernmentRecord @relation(fields: [documentNumber], references: [documentNumber])
+  votes                 Vote[]
+  sessions              Session[]
 }
 
 model Session {
@@ -81,6 +84,6 @@ model Vote {
   user              User      @relation(fields: [userId], references: [id])
 
   @@unique([userId, electionId])
-  @@unique([ipAddress, electionId])
+  // @@unique([ipAddress, electionId]) // Disabled for local testing (multiple users on same IP)
 }
 

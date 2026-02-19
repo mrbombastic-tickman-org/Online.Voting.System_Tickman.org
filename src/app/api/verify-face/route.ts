@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getSession, checkRateLimit, getClientIP } from '@/lib/auth';
 
-// Euclidean distance between two face descriptors
+// Euclidean distance — proven reliable for face-api.js 128-dim embeddings
 function euclideanDistance(desc1: number[], desc2: number[]): number {
     if (desc1.length !== desc2.length) return Infinity;
     let sum = 0;
@@ -12,13 +12,16 @@ function euclideanDistance(desc1: number[], desc2: number[]): number {
     return Math.sqrt(sum);
 }
 
-// @vladmandic/human uses 512-dim embeddings with tighter Euclidean distance
-const FACE_MATCH_THRESHOLD = 0.4;
+// face-api.js 128-dim embeddings:
+//   Same person: Euclidean distance ~0.3–0.45
+//   Different person: Euclidean distance >0.6
+// Threshold of 0.6 provides good balance
+const FACE_MATCH_THRESHOLD = 0.6;
 
-// Rate limit: 20 face verification attempts per minute
+// Rate limit: 50 face verification attempts per minute (relaxed for development)
 const FACE_RATE_LIMIT = {
     windowMs: 60 * 1000,
-    maxRequests: 20,
+    maxRequests: 50,
     message: 'Too many face verification attempts.',
 };
 
@@ -53,11 +56,11 @@ export async function POST(request: NextRequest) {
         }
 
         // Validate descriptor array
-        if (!Array.isArray(incomingDesc) || incomingDesc.length !== 512) {
-            return NextResponse.json({ error: 'Invalid face descriptor: must be a 512-dimensional vector' }, { status: 400 });
+        if (!Array.isArray(incomingDesc) || incomingDesc.length < 64) {
+            return NextResponse.json({ error: 'Invalid face descriptor format' }, { status: 400 });
         }
 
-        // Validate all values are numbers in reasonable range
+        // Validate all values are finite numbers
         if (!incomingDesc.every(v => typeof v === 'number' && isFinite(v))) {
             return NextResponse.json({ error: 'Invalid face descriptor values' }, { status: 400 });
         }
@@ -90,19 +93,24 @@ export async function POST(request: NextRequest) {
             }, { status: 500 });
         }
 
+        // Dimension mismatch — user needs to re-register with current model
+        if (incomingDesc.length !== storedDesc.length) {
+            return NextResponse.json({
+                verified: false,
+                message: 'Face model has been updated. Please re-register to update your biometric data.',
+            });
+        }
+
         // Compare face descriptors using Euclidean distance
         const distance = euclideanDistance(incomingDesc, storedDesc);
         const verified = distance < FACE_MATCH_THRESHOLD;
 
-        // Security: Don't log user names with face verification results
-        // Only log generic info for debugging
-        console.log(`Face verification attempt: verified=${verified}, distance=${distance.toFixed(4)}`);
+        // Log for debugging (no PII)
+        console.log(`Face verification: verified=${verified}, distance=${distance.toFixed(4)}, dim=${incomingDesc.length}`);
 
-        // Don't expose exact distance to prevent attackers from tuning spoofing attempts
         return NextResponse.json({
             verified,
-            // Only return whether match was close, not exact distance
-            matchQuality: distance < 0.2 ? 'strong' : distance < FACE_MATCH_THRESHOLD ? 'acceptable' : 'poor',
+            matchQuality: distance < 0.35 ? 'strong' : distance < FACE_MATCH_THRESHOLD ? 'acceptable' : 'poor',
             message: verified
                 ? 'Face verification successful'
                 : 'Face verification failed. Please ensure proper lighting and face positioning.',

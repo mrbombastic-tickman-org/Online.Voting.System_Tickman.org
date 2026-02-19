@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:https": "next dev --experimental-https",
+    "share": "npx localtunnel --port 3000",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
@@ -14,7 +16,6 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "@vladmandic/human": "^3.3.6",
     "bcryptjs": "^3.0.3",
     "face-api.js": "^0.22.2",
     "next": "16.1.6",

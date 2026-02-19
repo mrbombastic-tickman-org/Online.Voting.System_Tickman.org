@@ -1,55 +1,41 @@
 'use client';
 import { useRef, useState, useCallback, useEffect } from 'react';
-// Type-only import — erased at runtime, so no Node.js bundle loaded at SSR
-import type { Human, Config, Result } from '@vladmandic/human';
 
-// ─── Singleton Human instance ───────────────────────────────────────────────
-let humanInstance: Human | null = null;
-let humanLoadPromise: Promise<Human> | null = null;
+// ─── face-api.js singleton ──────────────────────────────────────────────────
+// All face-api.js references are fully dynamic (no top-level import)
+// to prevent Turbopack from resolving TensorFlow during SSR.
 
-const humanConfig: Partial<Config> = {
-    debug: false,
-    // Use WebAssembly backend — works on any CPU with no GPU needed
-    backend: 'wasm' as const,
-    // Warm up on load so first detection is fast
-    warmup: 'none',
-    // Only enable what we need: face detection + description
-    face: {
-        enabled: true,
-        detector: { enabled: true, rotation: true, maxDetected: 1, minConfidence: 0.5 },
-        mesh: { enabled: true },
-        attention: { enabled: false },
-        iris: { enabled: false },
-        description: { enabled: true, minConfidence: 0.5 }, // 512-dim embedding
-        emotion: { enabled: false },
-        antispoof: { enabled: false },
-        liveness: { enabled: false },
-    },
-    body: { enabled: false },
-    hand: { enabled: false },
-    object: { enabled: false },
-    gesture: { enabled: false },
-    segmentation: { enabled: false },
-};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let fapi: any = null;
+let faceApiLoadPromise: Promise<void> | null = null;
 
-async function getHuman(): Promise<Human> {
-    if (humanInstance) return humanInstance;
-    if (humanLoadPromise) return humanLoadPromise;
+async function loadFaceApi(): Promise<void> {
+    // GUARD: Never load during SSR
+    if (typeof window === 'undefined') {
+        throw new Error('Face detection is only available in the browser');
+    }
 
-    humanLoadPromise = (async () => {
-        // Explicitly import the ESM browser build — prevents Next.js from
-        // accidentally resolving to human.node.js during SSR.
+    if (fapi) return;
+    if (faceApiLoadPromise) return faceApiLoadPromise;
+
+    faceApiLoadPromise = (async () => {
+        // Dynamic import — only runs in the browser
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        // @ts-ignore — no .d.ts for the ESM path; webpack alias handles the correct build
-        const mod: any = await import('@vladmandic/human/dist/human.esm.js');
-        const HumanClass: typeof Human = mod.Human ?? mod.default;
-        const h = new HumanClass(humanConfig);
-        await h.load();
-        humanInstance = h;
-        return h;
+        const mod: any = await import('face-api.js');
+        fapi = mod;
+
+        // Load the three models we need
+        const MODEL_URL = '/models';
+        await Promise.all([
+            fapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+            fapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL),
+            fapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+        ]);
+
+        console.log('[face-api.js] All models loaded successfully');
     })();
 
-    return humanLoadPromise;
+    return faceApiLoadPromise;
 }
 
 // ─── React hook ─────────────────────────────────────────────────────────────
@@ -86,17 +72,18 @@ export function useFaceDetection() {
         setErrorMsg('');
 
         try {
-            console.log('[Human] Loading face models…');
-            await getHuman(); // preload models while camera starts
-            console.log('[Human] Models ready');
+            console.log('[face-api.js] Loading models…');
+            await loadFaceApi();
+            console.log('[face-api.js] Models ready');
 
-            // Polyfill for older browsers
             if (!navigator.mediaDevices?.getUserMedia) {
                 throw new Error('Camera not supported in this browser.');
             }
 
-            const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
-            console.log('[Human] Camera access granted');
+            const mediaStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+            });
+            console.log('[face-api.js] Camera access granted');
             streamRef.current = mediaStream;
 
             // Give the video element a tick to render
@@ -105,11 +92,11 @@ export function useFaceDetection() {
             if (!videoRef.current) throw new Error('Video element not found');
             videoRef.current.srcObject = mediaStream;
             await videoRef.current.play();
-            console.log('[Human] Video playing');
+            console.log('[face-api.js] Video playing');
 
             setStatus('ready');
         } catch (err: unknown) {
-            console.error('[Human] Camera start error:', err);
+            console.error('[face-api.js] Camera start error:', err);
             setStatus('error');
             const e = err as { name?: string; message?: string };
             if (e?.name === 'NotAllowedError') {
@@ -132,7 +119,7 @@ export function useFaceDetection() {
     }, []);
 
     const captureAndDetect = useCallback(async () => {
-        if (!videoRef.current || !canvasRef.current) return null;
+        if (!videoRef.current || !canvasRef.current || !fapi) return null;
         setStatus('capturing');
         setErrorMsg('');
 
@@ -148,12 +135,18 @@ export function useFaceDetection() {
         setCapturedImage(dataUrl);
 
         try {
-            const human = await getHuman();
-            console.log('[Human] Running detection…');
-            const result: Result = await human.detect(video);
+            console.log('[face-api.js] Running detection…');
 
-            const face = result.face?.[0];
-            if (!face || !face.embedding || face.embedding.length === 0) {
+            // Detect face with landmarks and compute descriptor
+            const detection = await fapi
+                .detectSingleFace(video, new fapi.TinyFaceDetectorOptions({
+                    inputSize: 416,
+                    scoreThreshold: 0.5,
+                }))
+                .withFaceLandmarks(true) // useTinyModel = true
+                .withFaceDescriptor();
+
+            if (!detection) {
                 setStatus('no-face');
                 setErrorMsg('No face detected. Make sure your face is clearly visible and well-lit.');
                 setCapturedImage(null);
@@ -161,19 +154,19 @@ export function useFaceDetection() {
             }
 
             stopCamera();
-            const descriptor = Array.from(face.embedding) as number[];
+            const descriptor = Array.from(detection.descriptor) as number[];
             setFaceDescriptor(descriptor);
             setStatus('detected');
 
-            console.log(`[Human] Face detected — embedding length: ${descriptor.length}, confidence: ${face.faceScore?.toFixed(3)}`);
+            console.log(`[face-api.js] Face detected — embedding length: ${descriptor.length}, score: ${detection.detection.score.toFixed(3)}`);
 
             return {
                 descriptor,
                 image: dataUrl,
-                score: face.faceScore ?? 0,
+                score: detection.detection.score,
             };
         } catch (err) {
-            console.error('[Human] Detection error:', err);
+            console.error('[face-api.js] Detection error:', err);
             setStatus('error');
             setErrorMsg('Face detection failed. Please ensure good lighting and try again.');
             return null;
@@ -213,6 +206,6 @@ export function euclideanDistance(desc1: number[], desc2: number[]): number {
     return Math.sqrt(sum);
 }
 
-// @vladmandic/human 512-dim embeddings: threshold is tighter than face-api.js
-// Typical match: ~0.3–0.4, non-match: >0.5
-export const FACE_MATCH_THRESHOLD = 0.4;
+// face-api.js 128-dim embeddings:
+// Same person: ~0.3–0.4, Different person: >0.6
+export const FACE_MATCH_THRESHOLD = 0.6;

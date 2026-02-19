@@ -32,18 +32,26 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
-        const { candidateId, electionId, faceDescriptor } = body;
+        const { candidateId, electionId, faceDescriptor, fingerprintAssertion, biometricType = 'face' } = body;
 
-        // Validate UUIDs to prevent injection
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-        if (!candidateId || !electionId || !uuidRegex.test(candidateId) || !uuidRegex.test(electionId)) {
+        // Validate format (UUID or Slug) - alphanumeric with hyphens/underscores
+        // Seeded data might use 'election-2026' etc.
+        const idRegex = /^[a-zA-Z0-9\-_]+$/;
+        if (!candidateId || !electionId || !idRegex.test(candidateId) || !idRegex.test(electionId)) {
             return NextResponse.json({ error: 'Invalid request parameters' }, { status: 400 });
         }
 
-        // Require face descriptor for verification at vote time
-        // 512-dim for @vladmandic/human
-        if (!faceDescriptor || !Array.isArray(faceDescriptor) || faceDescriptor.length !== 512) {
-            return NextResponse.json({ error: 'Face verification is required to cast a vote' }, { status: 400 });
+        // Biometric verification is REQUIRED for vote
+        if (biometricType === 'face') {
+            if (!faceDescriptor || !Array.isArray(faceDescriptor) || faceDescriptor.length < 64) {
+                return NextResponse.json({ error: 'Valid face descriptor is required' }, { status: 400 });
+            }
+        } else if (biometricType === 'fingerprint') {
+            if (!fingerprintAssertion) {
+                return NextResponse.json({ error: 'Fingerprint assertion is required' }, { status: 400 });
+            }
+        } else {
+            return NextResponse.json({ error: 'Invalid biometric type' }, { status: 400 });
         }
 
         // Verify election is active and within date range
@@ -64,35 +72,65 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Invalid candidate for this election' }, { status: 400 });
         }
 
-        // Verify face matches the registered user
+        // Verify biometric matches the registered user
         const user = await prisma.user.findUnique({
             where: { id: session.userId },
-            select: { faceDescriptor: true },
+            select: {
+                faceDescriptor: true,
+                fingerprintCredential: true,
+                biometricType: true
+            },
         });
 
-        if (!user?.faceDescriptor) {
-            return NextResponse.json({ error: 'No face biometric registered' }, { status: 400 });
+        if (!user) {
+            return NextResponse.json({ error: 'User not found' }, { status: 404 });
         }
 
-        let storedDescriptor: number[];
-        try {
-            storedDescriptor = JSON.parse(user.faceDescriptor);
-        } catch {
-            return NextResponse.json({ error: 'Stored face data corrupted' }, { status: 500 });
-        }
+        // Verify based on biometric type
+        if (biometricType === 'face') {
+            if (!user.faceDescriptor) {
+                return NextResponse.json({ error: 'No face biometric registered' }, { status: 400 });
+            }
 
-        // Calculate Euclidean distance
-        const distance = Math.sqrt(
-            faceDescriptor.reduce((sum: number, val: number, i: number) =>
-                sum + Math.pow(val - (storedDescriptor[i] || 0), 2), 0)
-        );
+            let storedDescriptor: number[];
+            try {
+                storedDescriptor = JSON.parse(user.faceDescriptor);
+            } catch {
+                return NextResponse.json({ error: 'Stored face data corrupted' }, { status: 500 });
+            }
 
-        const FACE_THRESHOLD = 0.6;
-        if (distance >= FACE_THRESHOLD) {
-            return NextResponse.json({
-                error: 'Face verification failed. Please try again.',
-                verified: false
-            }, { status: 403 });
+            // Calculate Euclidean distance
+            const distance = Math.sqrt(
+                faceDescriptor.reduce((sum: number, val: number, i: number) =>
+                    sum + Math.pow(val - (storedDescriptor[i] || 0), 2), 0)
+            );
+
+            const FACE_THRESHOLD = 0.6;
+            if (distance >= FACE_THRESHOLD) {
+                return NextResponse.json({
+                    error: 'Face verification failed. Please try again.',
+                    verified: false
+                }, { status: 403 });
+            }
+        } else if (biometricType === 'fingerprint') {
+            // For fingerprint, we trust the WebAuthn assertion verification
+            // that was done in the verify-fingerprint endpoint
+            if (!user.fingerprintCredential) {
+                return NextResponse.json({ error: 'No fingerprint biometric registered' }, { status: 400 });
+            }
+
+            // Parse and validate the assertion
+            try {
+                const assertion = JSON.parse(fingerprintAssertion);
+                if (assertion.id !== user.fingerprintCredential) {
+                    return NextResponse.json({
+                        error: 'Fingerprint verification failed. Credential mismatch.',
+                        verified: false
+                    }, { status: 403 });
+                }
+            } catch {
+                return NextResponse.json({ error: 'Invalid fingerprint assertion' }, { status: 400 });
+            }
         }
 
         // Check if user already voted in this election

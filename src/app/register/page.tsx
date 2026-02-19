@@ -1,8 +1,9 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useFaceDetection } from '@/lib/face-utils';
+import { useFingerprint, checkBiometricAvailability } from '@/lib/fingerprint-utils';
 import StepIndicator from '@/components/StepIndicator';
 
 function PasswordStrength({ password }: { password: string }) {
@@ -14,15 +15,15 @@ function PasswordStrength({ password }: { password: string }) {
         if (/[a-z]/.test(pwd)) score++;
         if (/[0-9]/.test(pwd)) score++;
         if (/[^A-Za-z0-9]/.test(pwd)) score++;
-        
+
         if (score <= 2) return { score, label: 'Weak', color: '#ff4757' };
         if (score <= 4) return { score, label: 'Medium', color: '#ffa502' };
         return { score, label: 'Strong', color: '#2ed573' };
     };
-    
+
     const strength = getStrength(password);
     if (!password) return null;
-    
+
     return (
         <div style={{ marginTop: '8px' }}>
             <div style={{ display: 'flex', gap: '4px', marginBottom: '4px' }}>
@@ -48,16 +49,10 @@ function PasswordStrength({ password }: { password: string }) {
 
 interface GovRecord {
     fullName: string;
-    dateOfBirth: string;
-    address: string;
+    dateOfBirthYear: number;
+    documentNumberLast4: string;
+    region: string;
 }
-
-const REGISTER_STEPS = [
-    { label: 'Verify ID' },
-    { label: 'Details' },
-    { label: 'Face Scan' },
-    { label: 'Finish' },
-];
 
 export default function RegisterPage() {
     const router = useRouter();
@@ -72,8 +67,36 @@ export default function RegisterPage() {
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
 
+    // Biometric type selection
+    const [biometricType, setBiometricType] = useState<'face' | 'fingerprint'>('face');
+    const [fingerprintAvailable, setFingerprintAvailable] = useState(false);
+
+    // Face detection
     const face = useFaceDetection();
     const [faceData, setFaceData] = useState<{ descriptor: number[]; image: string } | null>(null);
+
+    // Fingerprint
+    const fingerprint = useFingerprint();
+    const [fingerprintData, setFingerprintData] = useState<{ credentialId: string; publicKey: string } | null>(null);
+
+    // Check biometric availability on mount
+    useEffect(() => {
+        checkBiometricAvailability().then((status) => {
+            setFingerprintAvailable(status.available);
+            if (status.available && status.type === 'fingerprint') {
+                // Auto-select fingerprint if available
+                // setBiometricType('fingerprint');
+            }
+        });
+    }, []);
+
+    // Dynamic steps based on biometric type
+    const REGISTER_STEPS = [
+        { label: 'Verify ID' },
+        { label: 'Details' },
+        { label: biometricType === 'face' ? 'Face Scan' : 'Fingerprint' },
+        { label: 'Finish' },
+    ];
 
     const verifyDocument = async () => {
         setError('');
@@ -91,10 +114,12 @@ export default function RegisterPage() {
         }
     };
 
-    const goToFaceStep = async () => {
+    const goToBiometricStep = async () => {
         setStep(3);
         setError('');
-        setTimeout(() => { face.startCamera(); }, 100);
+        if (biometricType === 'face') {
+            setTimeout(() => { face.startCamera(); }, 100);
+        }
     };
 
     const handleCapture = async () => {
@@ -111,8 +136,37 @@ export default function RegisterPage() {
         await face.startCamera();
     };
 
+    const handleFingerprintRegister = async () => {
+        if (!govRecord || !email) return;
+
+        setLoading(true);
+        setError('');
+
+        const result = await fingerprint.register(email, govRecord.fullName);
+
+        if (result.success && result.credential) {
+            setFingerprintData({
+                credentialId: result.credential.id,
+                publicKey: result.credential.publicKey
+            });
+        } else {
+            setError(result.error || 'Fingerprint registration failed');
+        }
+
+        setLoading(false);
+    };
+
     const handleRegister = async () => {
-        if (!faceData) { setError('Biometric data is missing!'); return; }
+        // Validate biometric data
+        if (biometricType === 'face' && !faceData) {
+            setError('Face data is missing!');
+            return;
+        }
+        if (biometricType === 'fingerprint' && !fingerprintData) {
+            setError('Fingerprint data is missing!');
+            return;
+        }
+
         setError('');
         setLoading(true);
         try {
@@ -123,8 +177,13 @@ export default function RegisterPage() {
                     email,
                     password,
                     documentNumber: docNumber,
-                    faceImage: faceData.image,
-                    faceDescriptor: JSON.stringify(faceData.descriptor),
+                    biometricType,
+                    // Face data
+                    faceImage: faceData?.image,
+                    faceDescriptor: faceData ? JSON.stringify(faceData.descriptor) : null,
+                    // Fingerprint data
+                    fingerprintCredential: fingerprintData?.credentialId,
+                    fingerprintPublicKey: fingerprintData?.publicKey,
                 }),
             });
             const data = await res.json();
@@ -186,7 +245,7 @@ export default function RegisterPage() {
                         >
                             {loading ? 'Verifying...' : 'Verify Identity →'}
                         </button>
-                        
+
                         <div className="text-center mt-24">
                             <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem' }}>
                                 Already have an account?{' '}
@@ -206,8 +265,8 @@ export default function RegisterPage() {
                         </div>
 
                         <div className="gov-record-box">
-                            <p><strong>DOB:</strong> {govRecord.dateOfBirth}</p>
-                            <p><strong>Address:</strong> {govRecord.address}</p>
+                            <p><strong>Birth Year:</strong> {govRecord.dateOfBirthYear}</p>
+                            <p><strong>Region:</strong> {govRecord.region || 'N/A'}</p>
                         </div>
 
                         <div className="form-group">
@@ -228,81 +287,197 @@ export default function RegisterPage() {
                             <p className="form-error" role="alert">Passwords do not match!</p>
                         )}
 
+                        {/* Biometric Type Selection */}
+                        <div className="form-group" style={{ marginTop: '20px' }}>
+                            <label className="form-label">Biometric Authentication Method</label>
+                            <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+                                <button
+                                    type="button"
+                                    className={`btn ${biometricType === 'face' ? 'btn-primary' : 'btn-secondary'}`}
+                                    onClick={() => setBiometricType('face')}
+                                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                                >
+                                    <span>👤</span> Face ID
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`btn ${biometricType === 'fingerprint' ? 'btn-primary' : 'btn-secondary'}`}
+                                    onClick={() => setBiometricType('fingerprint')}
+                                    disabled={!fingerprintAvailable}
+                                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                                    title={!fingerprintAvailable ? 'Fingerprint not available on this device' : ''}
+                                >
+                                    <span>👆</span> Fingerprint
+                                </button>
+                            </div>
+                            {!fingerprintAvailable && (
+                                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '8px' }}>
+                                    * Fingerprint authentication requires a device with biometric sensor
+                                </p>
+                            )}
+                        </div>
+
                         <div className="flex-gap-16 mt-20">
                             <button className="btn btn-secondary" onClick={() => setStep(1)} style={{ flex: 1 }}>Back</button>
-                            <button className="btn btn-primary" onClick={goToFaceStep} disabled={!email || !password || password !== confirmPassword || password.length < 6} style={{ flex: 2 }}>
-                                Next: Face Scan →
+                            <button
+                                className="btn btn-primary"
+                                onClick={goToBiometricStep}
+                                disabled={!email || !password || password !== confirmPassword || password.length < 6}
+                                style={{ flex: 2 }}
+                            >
+                                Next: {biometricType === 'face' ? 'Face Scan' : 'Fingerprint'} →
                             </button>
                         </div>
                     </div>
                 )}
 
-                {/* Step 3: Face Capture */}
+                {/* Step 3: Biometric Capture */}
                 {step === 3 && (
                     <div className="card register-card animate-in">
-                        <h2 className="text-center mb-16">Biometric Scan</h2>
-                        <p className="text-center mb-24">Position your face in the frame.</p>
-
-                        {!faceData && (
-                            <div className="webcam-container" style={{ display: (face.status === 'idle' || face.status === 'loading') ? 'none' : 'block' }}>
-                                <video ref={face.videoRef} autoPlay playsInline muted />
-                                <canvas ref={face.canvasRef} style={{ display: 'none' }} />
-                                <div className="face-targeting" aria-hidden="true" />
-                            </div>
-                        )}
-
-                        {(face.status === 'idle' || face.status === 'loading') && (
-                            <div className="face-loading-placeholder">
-                                <div className="spinner mb-24" aria-hidden="true" />
-                                <h3>Initializing AI...</h3>
-                            </div>
-                        )}
-
-                        {(face.status === 'ready' || face.status === 'no-face') && !faceData && (
+                        {biometricType === 'face' ? (
                             <>
-                                {face.status === 'no-face' && (
-                                    <div className="alert alert-error mt-20" role="alert">No face detected! Try again.</div>
+                                <h2 className="text-center mb-16">Face Scan</h2>
+                                <p className="text-center mb-24">Position your face in the frame.</p>
+
+                                {!faceData && (
+                                    <div className="webcam-container" style={{ display: (face.status === 'idle' || face.status === 'loading') ? 'none' : 'block' }}>
+                                        <video ref={face.videoRef} autoPlay playsInline muted />
+                                        <canvas ref={face.canvasRef} style={{ display: 'none' }} />
+                                        <div className="face-targeting" aria-hidden="true" />
+                                    </div>
                                 )}
-                                <div className="text-center mt-24">
-                                    <button className="btn btn-primary btn-lg" onClick={handleCapture}>Capture Photo 📸</button>
+
+                                {(face.status === 'idle' || face.status === 'loading') && (
+                                    <div className="face-loading-placeholder">
+                                        <div className="spinner mb-24" aria-hidden="true" />
+                                        <h3>Initializing Camera...</h3>
+                                    </div>
+                                )}
+
+                                {(face.status === 'ready' || face.status === 'no-face') && !faceData && (
+                                    <>
+                                        {face.status === 'no-face' && (
+                                            <div className="alert alert-error mt-20" role="alert">No face detected! Try again.</div>
+                                        )}
+                                        <div className="text-center mt-24">
+                                            <button className="btn btn-primary btn-lg" onClick={handleCapture}>Capture Photo 📸</button>
+                                        </div>
+                                    </>
+                                )}
+
+                                {face.status === 'capturing' && (
+                                    <div className="text-center" style={{ padding: 40 }}>
+                                        <div className="spinner" aria-hidden="true" />
+                                        <p>Analyzing...</p>
+                                    </div>
+                                )}
+
+                                {faceData && (
+                                    <div className="text-center">
+                                        <div className="captured-preview" style={{ maxWidth: 300, margin: '0 auto' }}>
+                                            <img src={faceData.image} alt="Captured face" />
+                                        </div>
+                                        <div className="alert alert-success mt-24 text-center">
+                                            Face Data Extracted Successfully!
+                                        </div>
+                                        <div className="flex-gap-16 mt-24" style={{ justifyContent: 'center' }}>
+                                            <button className="btn btn-secondary" onClick={retakePhoto}>Retake</button>
+                                            <button className="btn btn-success" onClick={() => setStep(4)}>Confirm Photo →</button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {face.status === 'error' && (
+                                    <div className="text-center" style={{ padding: 20 }} role="alert" aria-live="assertive">
+                                        <div className="alert alert-error">{face.errorMsg}</div>
+                                        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '12px', marginBottom: '16px' }}>
+                                            Make sure you have granted camera permissions in your browser settings.
+                                        </p>
+                                        <button className="btn btn-primary mt-12" onClick={() => face.startCamera()}>Restart Camera</button>
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <>
+                                <h2 className="text-center mb-16">Fingerprint Registration</h2>
+                                <p className="text-center mb-24">Use your device's fingerprint sensor to register.</p>
+
+                                <div className="text-center" style={{ padding: '40px 20px' }}>
+                                    <div style={{ fontSize: '4rem', marginBottom: '20px' }}>👆</div>
+
+                                    {!fingerprintData && fingerprint.status !== 'registering' && (
+                                        <>
+                                            <p style={{ marginBottom: '20px', color: 'var(--text-muted)' }}>
+                                                Click the button below and place your finger on the sensor when prompted.
+                                            </p>
+                                            <button
+                                                className="btn btn-primary btn-lg"
+                                                onClick={handleFingerprintRegister}
+                                                disabled={loading}
+                                            >
+                                                Register Fingerprint
+                                            </button>
+                                        </>
+                                    )}
+
+                                    {fingerprint.status === 'registering' && (
+                                        <>
+                                            <div className="spinner" style={{ margin: '0 auto 20px' }} aria-hidden="true" />
+                                            <p><strong>Place your finger on the sensor...</strong></p>
+                                        </>
+                                    )}
+
+                                    {fingerprintData && (
+                                        <>
+                                            <div className="alert alert-success" style={{ marginBottom: '20px' }}>
+                                                <span aria-hidden="true">✅</span> Fingerprint Registered Successfully!
+                                            </div>
+                                            <div className="flex-gap-16" style={{ justifyContent: 'center' }}>
+                                                <button
+                                                    className="btn btn-secondary"
+                                                    onClick={() => { setFingerprintData(null); fingerprint.reset(); }}
+                                                >
+                                                    Register Again
+                                                </button>
+                                                <button
+                                                    className="btn btn-success"
+                                                    onClick={() => setStep(4)}
+                                                >
+                                                    Continue →
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {fingerprint.status === 'error' && (
+                                        <div className="alert alert-error" style={{ marginTop: '20px' }}>
+                                            {fingerprint.error}
+                                        </div>
+                                    )}
                                 </div>
+
+                                {!fingerprintAvailable && (
+                                    <div className="alert alert-error text-center">
+                                        Fingerprint authentication is not available on this device.
+                                        Please use Face ID instead.
+                                    </div>
+                                )}
                             </>
                         )}
 
-                        {face.status === 'capturing' && (
-                            <div className="text-center" style={{ padding: 40 }}>
-                                <div className="spinner" aria-hidden="true" />
-                                <p>Analyzing...</p>
-                            </div>
-                        )}
-
-                        {faceData && (
-                            <div className="text-center">
-                                <div className="captured-preview" style={{ maxWidth: 300, margin: '0 auto' }}>
-                                    <img src={faceData.image} alt="Captured face" />
-                                </div>
-                                <div className="alert alert-success mt-24 text-center">
-                                    Face Data Extracted Successfully!
-                                </div>
-                                <div className="flex-gap-16 mt-24" style={{ justifyContent: 'center' }}>
-                                    <button className="btn btn-secondary" onClick={retakePhoto}>Retake</button>
-                                    <button className="btn btn-success" onClick={() => setStep(4)}>Confirm Photo →</button>
-                                </div>
-                            </div>
-                        )}
-
-                        {face.status === 'error' && (
-                            <div className="text-center" style={{ padding: 20 }} role="alert" aria-live="assertive">
-                                <div className="alert alert-error">{face.errorMsg}</div>
-                                <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '12px', marginBottom: '16px' }}>
-                                    Make sure you have granted camera permissions in your browser settings.
-                                </p>
-                                <button className="btn btn-primary mt-12" onClick={() => face.startCamera()}>Restart Camera</button>
-                            </div>
-                        )}
-
                         <div className="text-center mt-24">
-                            <button className="btn btn-secondary btn-sm" onClick={() => { face.reset(); setStep(2); }}>Cancel</button>
+                            <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => {
+                                    face.reset();
+                                    fingerprint.reset();
+                                    setFaceData(null);
+                                    setFingerprintData(null);
+                                    setStep(2);
+                                }}
+                            >
+                                Cancel
+                            </button>
                         </div>
                     </div>
                 )}
@@ -317,12 +492,23 @@ export default function RegisterPage() {
                             <p><strong>Name:</strong> {govRecord?.fullName}</p>
                             <p><strong>Email:</strong> {email}</p>
                             <p><strong>ID:</strong> {docNumber}</p>
-                            <p><strong>Biometrics:</strong> <span className="badge badge-success">READY</span></p>
+                            <p>
+                                <strong>Biometrics:</strong>{' '}
+                                <span className="badge badge-success">
+                                    {biometricType === 'face' ? '👤 FACE' : '👆 FINGERPRINT'} READY
+                                </span>
+                            </p>
                         </div>
 
                         <div className="flex-gap-16">
                             <button className="btn btn-secondary" onClick={() => setStep(3)} style={{ flex: 1 }}>Back</button>
-                            <button className="btn btn-success btn-lg" onClick={handleRegister} disabled={loading || !faceData} style={{ flex: 2, boxShadow: '6px 6px 0 0 #000' }} aria-busy={loading}>
+                            <button
+                                className="btn btn-success btn-lg"
+                                onClick={handleRegister}
+                                disabled={loading || (biometricType === 'face' ? !faceData : !fingerprintData)}
+                                style={{ flex: 2, boxShadow: '6px 6px 0 0 #000' }}
+                                aria-busy={loading}
+                            >
                                 {loading ? 'Creating ID...' : 'Create Voter ID →'}
                             </button>
                         </div>

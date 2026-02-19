@@ -3,10 +3,10 @@ import { hashSync } from 'bcryptjs';
 import prisma from '@/lib/prisma';
 import { setSessionCookie, checkRateLimit, getClientIP } from '@/lib/auth';
 
-// Rate limit configuration: 3 registrations per hour per IP
+// Rate limit configuration: 50 registrations per 5 minutes per IP (relaxed for development)
 const REGISTER_RATE_LIMIT = {
-    windowMs: 60 * 60 * 1000, // 1 hour
-    maxRequests: 3,
+    windowMs: 5 * 60 * 1000, // 5 minutes
+    maxRequests: 50,
     message: 'Too many registration attempts. Please try again later.',
 };
 
@@ -54,7 +54,16 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
-        const { email, password, documentNumber, faceImage, faceDescriptor } = body;
+        const {
+            email,
+            password,
+            documentNumber,
+            biometricType = 'face',
+            faceImage,
+            faceDescriptor,
+            fingerprintCredential,
+            fingerprintPublicKey
+        } = body;
 
         if (!email || !password || !documentNumber) {
             return NextResponse.json(
@@ -81,25 +90,40 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        if (!faceImage || !faceDescriptor) {
-            return NextResponse.json(
-                { error: 'Face scan is required for registration' },
-                { status: 400 }
-            );
-        }
+        // Validate biometric data based on type
+        if (biometricType === 'face') {
+            if (!faceImage || !faceDescriptor) {
+                return NextResponse.json(
+                    { error: 'Face scan is required for registration' },
+                    { status: 400 }
+                );
+            }
 
-        // Validate face image format and size
-        if (typeof faceImage !== 'string' || !faceImage.startsWith('data:image/')) {
+            // Validate face image format and size
+            if (typeof faceImage !== 'string' || !faceImage.startsWith('data:image/')) {
+                return NextResponse.json(
+                    { error: 'Invalid face image format' },
+                    { status: 400 }
+                );
+            }
+            // ~2MB limit: base64 overhead is ~1.33x, so 2MB raw ≈ 2.7MB base64
+            const MAX_IMAGE_BYTES = 2_800_000;
+            if (faceImage.length > MAX_IMAGE_BYTES) {
+                return NextResponse.json(
+                    { error: 'Face image is too large. Please use better lighting instead of a high-res photo.' },
+                    { status: 400 }
+                );
+            }
+        } else if (biometricType === 'fingerprint') {
+            if (!fingerprintCredential || !fingerprintPublicKey) {
+                return NextResponse.json(
+                    { error: 'Fingerprint registration is required for registration' },
+                    { status: 400 }
+                );
+            }
+        } else {
             return NextResponse.json(
-                { error: 'Invalid face image format' },
-                { status: 400 }
-            );
-        }
-        // ~2MB limit: base64 overhead is ~1.33x, so 2MB raw ≈ 2.7MB base64
-        const MAX_IMAGE_BYTES = 2_800_000;
-        if (faceImage.length > MAX_IMAGE_BYTES) {
-            return NextResponse.json(
-                { error: 'Face image is too large. Please use better lighting instead of a high-res photo.' },
+                { error: 'Invalid biometric type. Must be "face" or "fingerprint"' },
                 { status: 400 }
             );
         }
@@ -138,15 +162,20 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Create user with face descriptor (use higher bcrypt cost)
+        // Create user with biometric data (use higher bcrypt cost)
         const user = await prisma.user.create({
             data: {
                 email: email.toLowerCase().trim(),
                 passwordHash: hashSync(password, 12), // Increased cost factor
                 fullName: govRecord.fullName,
                 documentNumber: normalizedDocNumber,
-                faceImageUrl: faceImage,
-                faceDescriptor: faceDescriptor,
+                // Face data (if face biometric)
+                faceImageUrl: biometricType === 'face' ? faceImage : null,
+                faceDescriptor: biometricType === 'face' ? faceDescriptor : null,
+                // Fingerprint data (if fingerprint biometric)
+                biometricType: biometricType,
+                fingerprintCredential: biometricType === 'fingerprint' ? fingerprintCredential : null,
+                fingerprintPublicKey: biometricType === 'fingerprint' ? fingerprintPublicKey : null,
                 verified: true,
             },
         });

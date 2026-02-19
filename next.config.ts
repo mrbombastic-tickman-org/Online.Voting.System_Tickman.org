@@ -1,29 +1,7 @@
 import type { NextConfig } from "next";
-import path from "path";
 
 const nextConfig: NextConfig = {
   reactCompiler: true,
-
-  // Turbopack config (Next.js 16 default bundler)
-  turbopack: {
-    resolveAlias: {
-      // Force the ESM browser build — prevents Turbopack from loading human.node.js
-      '@vladmandic/human': './node_modules/@vladmandic/human/dist/human.esm.js',
-    },
-  },
-
-  // Webpack config (fallback for --webpack flag)
-  webpack(config, { isServer }) {
-    if (isServer) {
-      const externals = Array.isArray(config.externals) ? config.externals : [];
-      config.externals = [...externals, '@vladmandic/human'];
-    } else {
-      config.resolve.alias['@vladmandic/human'] = path.resolve(
-        './node_modules/@vladmandic/human/dist/human.esm.js'
-      );
-    }
-    return config;
-  },
 
   // Security headers
   async headers() {
