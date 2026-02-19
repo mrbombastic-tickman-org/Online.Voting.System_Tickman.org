@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { hashSync } from 'bcryptjs';
 import prisma from '@/lib/prisma';
 import { setSessionCookie, checkRateLimit, getClientIP } from '@/lib/auth';
+import { facePlusPlus } from '@/lib/faceplusplus';
 
 // Rate limit configuration: 50 registrations per 5 minutes per IP (relaxed for development)
 const REGISTER_RATE_LIMIT = {
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
-        const {
+        let {
             email,
             password,
             documentNumber,
@@ -96,6 +97,7 @@ export async function POST(request: NextRequest) {
                 );
             }
             // ~2MB limit: base64 overhead is ~1.33x, so 2MB raw ≈ 2.7MB base64
+            // ~2MB limit: base64 overhead is ~1.33x, so 2MB raw ≈ 2.7MB base64
             const MAX_IMAGE_BYTES = 2_800_000;
             if (faceImage.length > MAX_IMAGE_BYTES) {
                 return NextResponse.json(
@@ -103,6 +105,20 @@ export async function POST(request: NextRequest) {
                     { status: 400 }
                 );
             }
+
+            // Face++ Detection
+            const faceToken = await facePlusPlus.detect(faceImage);
+            if (!faceToken) {
+                return NextResponse.json(
+                    { error: 'Face++ could not detect a face. Please try again with better lighting.' },
+                    { status: 400 }
+                );
+            }
+            // Store the token in the descriptor field
+            // Note: We are hijacking the faceDescriptor field to store the face_token string
+            // logic later will check if it looks like a JSON array (old) or a string (new)
+            faceDescriptor = faceToken;
+
         } else if (biometricType === 'fingerprint') {
             if (!fingerprintCredential || !fingerprintPublicKey) {
                 return NextResponse.json(

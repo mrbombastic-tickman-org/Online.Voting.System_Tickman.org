@@ -116,11 +116,11 @@ export default function VotePage() {
         const result = await face.captureAndDetect();
         if (result) {
             setFaceResult({ descriptor: result.descriptor, image: result.image });
-            verifyFace(result.descriptor);
+            verifyFace(result.image);
         }
     };
 
-    const verifyFace = async (descriptor: number[]) => {
+    const verifyFace = async (image: string) => {
         setBiometricVerifying(true);
         setError('');
         setVerifyMessage('');
@@ -128,7 +128,7 @@ export default function VotePage() {
             const res = await fetch('/api/verify-face', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ faceDescriptor: descriptor }),
+                body: JSON.stringify({ faceImage: image }),
             });
             const data = await res.json();
             if (data.verified) {
