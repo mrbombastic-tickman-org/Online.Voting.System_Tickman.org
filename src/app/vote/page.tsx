@@ -186,7 +186,7 @@ export default function VotePage() {
                     setVerifyMessage(verifyData.message || 'Fingerprint verified successfully');
                     setStep('confirm');
                 } else {
-                    setError(verifyData.error || 'Fingerprint verification failed');
+                    setError(verifyData.error || verifyData.message || 'Fingerprint verification failed');
                 }
             } else {
                 setError(result.error || 'Fingerprint verification failed');

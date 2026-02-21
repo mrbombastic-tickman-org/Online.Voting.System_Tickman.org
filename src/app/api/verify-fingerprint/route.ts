@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'crypto';
+import { createHash, createPublicKey, timingSafeEqual, verify as cryptoVerify } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getSession, verifyCSRF } from '@/lib/auth';
@@ -125,21 +125,22 @@ export async function POST(request: NextRequest) {
 
         if (!consumeFingerprintChallenge(session.userId, clientData.challenge)) {
             return NextResponse.json(
-                { verified: false, message: 'Fingerprint challenge expired or invalid' },
+                { verified: false, error: 'Fingerprint challenge expired or invalid', message: 'Fingerprint challenge expired or invalid' },
                 { status: 400 }
             );
         }
 
         if (!isCredentialMatch(assertion, user.fingerprintCredential)) {
             return NextResponse.json(
-                { verified: false, message: 'Credential mismatch' },
+                { verified: false, error: 'Credential mismatch', message: 'Credential mismatch' },
                 { status: 403 }
             );
         }
 
-        if (!verifyAuthenticatorData(assertion, clientData.origin)) {
+        const authValidation = verifyAuthenticatorData(assertion, clientData.origin);
+        if (!authValidation.ok) {
             return NextResponse.json(
-                { verified: false, message: 'Authenticator data validation failed' },
+                { verified: false, error: authValidation.reason, message: authValidation.reason },
                 { status: 403 }
             );
         }
@@ -151,7 +152,7 @@ export async function POST(request: NextRequest) {
 
         if (!signatureVerified) {
             return NextResponse.json(
-                { verified: false, message: 'Fingerprint signature verification failed' },
+                { verified: false, error: 'Fingerprint signature verification failed', message: 'Fingerprint signature verification failed' },
                 { status: 403 }
             );
         }
@@ -293,15 +294,17 @@ function isCredentialMatch(assertion: AssertionPayload, storedCredential: string
     );
 }
 
-function verifyAuthenticatorData(assertion: AssertionPayload, origin: string): boolean {
+function verifyAuthenticatorData(assertion: AssertionPayload, origin: string): { ok: boolean; reason?: string } {
     let authenticatorData: Buffer;
     try {
         authenticatorData = base64UrlToBuffer(assertion.response.authenticatorData);
     } catch {
-        return false;
+        return { ok: false, reason: 'Invalid authenticator data format' };
     }
 
-    if (authenticatorData.length < 37) return false;
+    if (authenticatorData.length < 37) {
+        return { ok: false, reason: 'Authenticator data is too short' };
+    }
 
     const rpId = new URL(origin).hostname;
     const expectedRpIdHash = createHash('sha256').update(rpId).digest();
@@ -311,13 +314,20 @@ function verifyAuthenticatorData(assertion: AssertionPayload, origin: string): b
         rpIdHash.length !== expectedRpIdHash.length ||
         !timingSafeEqual(rpIdHash, expectedRpIdHash)
     ) {
-        return false;
+        return {
+            ok: false,
+            reason: 'Fingerprint credential is bound to a different domain. Re-register on this site.',
+        };
     }
 
     const flags = authenticatorData[32];
     const userPresent = (flags & 0x01) !== 0;
     const userVerified = (flags & 0x04) !== 0;
-    return userPresent && userVerified;
+    if (!userPresent || !userVerified) {
+        return { ok: false, reason: 'Biometric verification was not confirmed by authenticator' };
+    }
+
+    return { ok: true };
 }
 
 async function verifySignature(
@@ -338,53 +348,16 @@ async function verifySignature(
     }
     const clientDataHash = createHash('sha256').update(clientDataJSON).digest();
     const signedPayload = Buffer.concat([authenticatorData, clientDataHash]);
-    const publicKeyBytes = Uint8Array.from(publicKeyBuffer);
-    const signatureBytes = Uint8Array.from(signature);
-    const signedPayloadBytes = Uint8Array.from(signedPayload);
-
-    const subtle = globalThis.crypto?.subtle;
-    if (!subtle) {
-        return false;
-    }
 
     try {
-        const ecKey = await subtle.importKey(
-            'spki',
-            publicKeyBytes,
-            { name: 'ECDSA', namedCurve: 'P-256' },
-            false,
-            ['verify']
-        );
+        const publicKey = createPublicKey({
+            key: publicKeyBuffer,
+            format: 'der',
+            type: 'spki',
+        });
 
-        const ecVerified = await subtle.verify(
-            { name: 'ECDSA', hash: 'SHA-256' },
-            ecKey,
-            signatureBytes,
-            signedPayloadBytes
-        );
-
-        if (ecVerified) {
-            return true;
-        }
-    } catch {
-        // Not an EC key, try RSA.
-    }
-
-    try {
-        const rsaKey = await subtle.importKey(
-            'spki',
-            publicKeyBytes,
-            { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-            false,
-            ['verify']
-        );
-
-        return subtle.verify(
-            'RSASSA-PKCS1-v1_5',
-            rsaKey,
-            signatureBytes,
-            signedPayloadBytes
-        );
+        // Node's verifier supports both RSA and EC keys with the same API.
+        return cryptoVerify('sha256', signedPayload, publicKey, signature);
     } catch {
         return false;
     }
