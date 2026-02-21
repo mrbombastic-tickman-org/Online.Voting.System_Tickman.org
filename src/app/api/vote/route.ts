@@ -143,14 +143,46 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        const vote = await prisma.$transaction(async (tx) => {
-            const ua = request.headers.get('user-agent') || 'unknown';
-            const lang = request.headers.get('accept-language') || '';
-            const deviceFingerprint = createHash('sha256')
-                .update(`${ua}|${lang}`)
-                .digest('hex')
-                .substring(0, 64);
+        const ua = request.headers.get('user-agent') || 'unknown';
+        const lang = request.headers.get('accept-language') || '';
+        const deviceFingerprint = createHash('sha256')
+            .update(`${ua}|${lang}`)
+            .digest('hex')
+            .substring(0, 64);
 
+        // Enforcement mode:
+        // - ON: same IP or same device can vote only once per election (across users)
+        // - OFF: this cross-user device/IP enforcement is skipped for testing
+        if (ipEnabled) {
+            const duplicateWhere: Array<{
+                ipAddress?: string;
+                deviceFingerprint?: string;
+            }> = [{ deviceFingerprint }];
+
+            if (clientIP !== 'unknown') {
+                duplicateWhere.push({ ipAddress: clientIP });
+            }
+
+            const existingIpOrDeviceVote = await prisma.vote.findFirst({
+                where: {
+                    electionId,
+                    OR: duplicateWhere,
+                },
+                select: { id: true },
+            });
+
+            if (existingIpOrDeviceVote) {
+                return NextResponse.json(
+                    {
+                        error: 'IP/device has already voted in this election. Disable IP tracking in admin only for testing.',
+                        alreadyVoted: true,
+                    },
+                    { status: 409 }
+                );
+            }
+        }
+
+        const vote = await prisma.$transaction(async (tx) => {
             return tx.vote.create({
                 data: {
                     userId: session.userId,

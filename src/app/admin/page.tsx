@@ -233,8 +233,8 @@ export default function AdminPage() {
                     <h3 style={{ fontSize: '1rem', marginBottom: 4, fontWeight: 600 }}>🌐 IP Address Tracking</h3>
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0 }}>
                         {ipTracking
-                            ? 'IP addresses are being recorded with each vote for rate limiting and fraud detection.'
-                            : 'IP tracking is disabled. Votes will not record IP addresses. Rate limiting uses fallback.'}
+                            ? 'Enforced mode: same IP or same device can vote only once per election.'
+                            : 'Testing mode: IP/device duplicate-vote blocking is disabled for easier testing.'}
                     </p>
                 </div>
                 <button
