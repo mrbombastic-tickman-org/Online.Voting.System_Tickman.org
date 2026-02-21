@@ -1,30 +1,21 @@
 import { NextResponse } from 'next/server';
-import { getSession } from '@/lib/auth';
+import { getSession, verifyCSRF } from '@/lib/auth';
 import prisma from '@/lib/prisma';
 import { isIpTrackingEnabled, setIpTrackingEnabled } from '@/lib/ip-tracking';
 
 export async function GET() {
-    const session = await getSession();
-    if (!session) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const auth = await requireAdmin();
+    if (!auth.ok) return auth.response;
 
     return NextResponse.json({ ipTrackingEnabled: isIpTrackingEnabled() });
 }
 
 export async function POST(request: Request) {
-    const session = await getSession();
-    if (!session) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const auth = await requireAdmin();
+    if (!auth.ok) return auth.response;
 
-    const user = await prisma.user.findUnique({
-        where: { id: session.userId },
-        select: { isAdmin: true },
-    });
-
-    if (!user?.isAdmin) {
-        return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+    if (!(await verifyCSRF(request))) {
+        return NextResponse.json({ error: 'CSRF validation failed' }, { status: 403 });
     }
 
     const body = await request.json();
@@ -38,4 +29,30 @@ export async function POST(request: Request) {
         ipTrackingEnabled: isIpTrackingEnabled(),
         message: `IP tracking ${isIpTrackingEnabled() ? 'enabled' : 'disabled'}`,
     });
+}
+
+async function requireAdmin(): Promise<
+    { ok: true } | { ok: false; response: NextResponse }
+> {
+    const session = await getSession();
+    if (!session) {
+        return {
+            ok: false,
+            response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+        };
+    }
+
+    const user = await prisma.user.findUnique({
+        where: { id: session.userId },
+        select: { isAdmin: true },
+    });
+
+    if (!user?.isAdmin) {
+        return {
+            ok: false,
+            response: NextResponse.json({ error: 'Admin access required' }, { status: 403 }),
+        };
+    }
+
+    return { ok: true };
 }

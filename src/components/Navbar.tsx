@@ -1,7 +1,8 @@
 'use client';
-import Link from 'next/link';
+import Link, { type LinkProps } from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
+import { getCSRFHeaders } from '@/lib/csrf';
 
 interface NavSession {
     authenticated: boolean;
@@ -21,13 +22,13 @@ export default function Navbar() {
             .catch(() => setSession({ authenticated: false }));
     }, [pathname]);
 
-    useEffect(() => {
-        setMenuOpen(false);
-    }, [pathname]);
-
     const handleLogout = async () => {
-        await fetch('/api/auth/logout', { method: 'POST' });
+        await fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: getCSRFHeaders(),
+        });
         setSession({ authenticated: false });
+        setMenuOpen(false);
         router.push('/');
     };
 
@@ -58,20 +59,20 @@ export default function Navbar() {
                 )}
 
                 <div className={`nav-links ${menuOpen ? 'open' : ''}`}>
-                    <NavLink href="/" label="Home" active={pathname === '/'} />
-                    <NavLink href="/vote" label="Vote Now" active={pathname === '/vote'} />
-                    <NavLink href="/register" label="Register" active={pathname === '/register'} />
+                    <NavLink href="/" label="Home" active={pathname === '/'} onNavigate={() => setMenuOpen(false)} />
+                    <NavLink href="/vote" label="Vote Now" active={pathname === '/vote'} onNavigate={() => setMenuOpen(false)} />
+                    <NavLink href="/register" label="Register" active={pathname === '/register'} onNavigate={() => setMenuOpen(false)} />
 
                     {!session?.authenticated && (
-                        <NavLink href="/login" label="Login" active={pathname === '/login'} />
+                        <NavLink href="/login" label="Login" active={pathname === '/login'} onNavigate={() => setMenuOpen(false)} />
                     )}
 
                     {session?.authenticated && (
-                        <NavLink href="/dashboard" label="Dashboard" active={pathname === '/dashboard'} />
+                        <NavLink href="/dashboard" label="Dashboard" active={pathname === '/dashboard'} onNavigate={() => setMenuOpen(false)} />
                     )}
 
                     {session?.authenticated && session?.user?.isAdmin && (
-                        <NavLink href="/admin" label="Admin" active={pathname === '/admin'} />
+                        <NavLink href="/admin" label="Admin" active={pathname === '/admin'} onNavigate={() => setMenuOpen(false)} />
                     )}
 
                     {session?.authenticated && (
@@ -89,12 +90,13 @@ export default function Navbar() {
     );
 }
 
-function NavLink({ href, label, active }: { href: string; label: string; active: boolean }) {
+function NavLink({ href, label, active, onNavigate }: { href: LinkProps['href']; label: string; active: boolean; onNavigate?: () => void }) {
     return (
         <Link
             href={href}
             className={`nav-link ${active ? 'active' : ''}`}
             aria-current={active ? 'page' : undefined}
+            onClick={onNavigate}
         >
             {label}
         </Link>

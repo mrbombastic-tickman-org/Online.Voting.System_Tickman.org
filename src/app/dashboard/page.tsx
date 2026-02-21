@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import LoadingSpinner from '@/components/LoadingSpinner';
+import { getCSRFHeaders } from '@/lib/csrf';
 
 function LogoutButton({ onLogout }: { onLogout: () => void }) {
     return (
@@ -40,7 +41,10 @@ export default function DashboardPage() {
     const [loading, setLoading] = useState(true);
 
     const handleLogout = async () => {
-        await fetch('/api/auth/logout', { method: 'POST' });
+        await fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: getCSRFHeaders(),
+        });
         router.push('/');
     };
 

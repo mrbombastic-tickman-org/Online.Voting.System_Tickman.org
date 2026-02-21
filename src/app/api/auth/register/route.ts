@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { hashSync } from 'bcryptjs';
 import prisma from '@/lib/prisma';
-import { setSessionCookie, checkRateLimit, getClientIP } from '@/lib/auth';
+import { setSessionCookie, checkRateLimit, getRateLimitIdentifier } from '@/lib/auth';
 import { facePlusPlus } from '@/lib/faceplusplus';
 
-// Rate limit configuration: 50 registrations per 5 minutes per IP (relaxed for development)
+// Rate limit configuration: 50 registrations per minute per identifier
 const REGISTER_RATE_LIMIT = {
-    windowMs: 5 * 60 * 1000, // 5 minutes
+    windowMs: 60 * 1000, // 1 minute
     maxRequests: 50,
     message: 'Too many registration attempts. Please try again later.',
 };
@@ -29,11 +29,14 @@ function validatePassword(password: string): { valid: boolean; errors: string[] 
     return { valid: errors.length === 0, errors };
 }
 
+function isLikelyBase64Url(value: string): boolean {
+    return /^[A-Za-z0-9\-_]+$/.test(value) && value.length >= 16;
+}
+
 export async function POST(request: NextRequest) {
     try {
         // Rate limiting by IP
-        const clientIP = getClientIP(request);
-        const rateLimitKey = `register:${clientIP}`;
+        const rateLimitKey = getRateLimitIdentifier(request, 'register');
         const rateLimit = checkRateLimit(rateLimitKey, REGISTER_RATE_LIMIT);
 
         if (!rateLimit.allowed) {
@@ -44,16 +47,17 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
-        let {
+        const {
             email,
             password,
             documentNumber,
             biometricType = 'face',
             faceImage,
-            faceDescriptor,
+            faceDescriptor: inputFaceDescriptor,
             fingerprintCredential,
             fingerprintPublicKey
         } = body;
+        let faceDescriptor = inputFaceDescriptor;
 
         if (!email || !password || !documentNumber) {
             return NextResponse.json(
@@ -123,6 +127,18 @@ export async function POST(request: NextRequest) {
             if (!fingerprintCredential || !fingerprintPublicKey) {
                 return NextResponse.json(
                     { error: 'Fingerprint registration is required for registration' },
+                    { status: 400 }
+                );
+            }
+
+            if (
+                typeof fingerprintCredential !== 'string' ||
+                typeof fingerprintPublicKey !== 'string' ||
+                !isLikelyBase64Url(fingerprintCredential) ||
+                !isLikelyBase64Url(fingerprintPublicKey)
+            ) {
+                return NextResponse.json(
+                    { error: 'Invalid fingerprint credential data' },
                     { status: 400 }
                 );
             }

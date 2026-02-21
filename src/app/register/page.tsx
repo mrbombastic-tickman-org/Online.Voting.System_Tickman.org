@@ -146,7 +146,7 @@ export default function RegisterPage() {
 
         if (result.success && result.credential) {
             setFingerprintData({
-                credentialId: result.credential.id,
+                credentialId: result.credential.rawId,
                 publicKey: result.credential.publicKey
             });
         } else {
@@ -375,6 +375,7 @@ export default function RegisterPage() {
                                 {faceData && (
                                     <div className="text-center">
                                         <div className="captured-preview" style={{ maxWidth: 300, margin: '0 auto' }}>
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
                                             <img src={faceData.image} alt="Captured face" />
                                         </div>
                                         <div className="alert alert-success mt-24 text-center">
@@ -400,7 +401,7 @@ export default function RegisterPage() {
                         ) : (
                             <>
                                 <h2 className="text-center mb-16">Fingerprint Registration</h2>
-                                <p className="text-center mb-24">Use your device's fingerprint sensor to register.</p>
+                                <p className="text-center mb-24">Use your device&apos;s fingerprint sensor to register.</p>
 
                                 <div className="text-center" style={{ padding: '40px 20px' }}>
                                     <div style={{ fontSize: '4rem', marginBottom: '20px' }}>👆</div>

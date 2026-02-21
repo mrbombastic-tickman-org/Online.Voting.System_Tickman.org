@@ -144,10 +144,19 @@ SESSION_SECRET_KEY="your-64-character-hex-string-here-generated-with-crypto"
 ADMIN_EMAILS="admin@example.com,admin2@example.com"
 
 # ============================================
+# BIOMETRICS (Required for Face++)
+# ============================================
+FACEPLUSPLUS_API_KEY="your-faceplusplus-api-key"
+FACEPLUSPLUS_API_SECRET="your-faceplusplus-api-secret"
+
+# ============================================
 # OPTIONAL CONFIGURATION
 # ============================================
 # Environment mode
 NODE_ENV="development"
+
+# Public origin used for WebAuthn origin checks
+# APP_ORIGIN="https://votesecure.example.com"
 
 # Trusted proxies (for production behind nginx/Cloudflare)
 # TRUSTED_PROXIES="10.0.0.1,192.168.1.1"

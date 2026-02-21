@@ -54,6 +54,10 @@ Create a `.env` file in the project root:
 
 ```env
 DATABASE_URL="postgresql://user:password@host:5432/dbname"
+SESSION_SECRET_KEY="CHANGE_THIS_TO_A_SECURE_RANDOM_32_PLUS_CHARACTER_SECRET_KEY"
+FACEPLUSPLUS_API_KEY="your-faceplusplus-api-key"
+FACEPLUSPLUS_API_SECRET="your-faceplusplus-api-secret"
+APP_ORIGIN="http://localhost:3000"
 ```
 
 ### 3. Setup Database

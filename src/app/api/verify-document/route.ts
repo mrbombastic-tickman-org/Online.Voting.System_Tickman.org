@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { checkRateLimit, getClientIP } from '@/lib/auth';
+import { checkRateLimit, getRateLimitIdentifier } from '@/lib/auth';
 
-// Rate limit: 50 document checks per 5 minutes per IP (relaxed for development)
+// Rate limit: 50 document checks per minute
 const DOC_RATE_LIMIT = {
-    windowMs: 5 * 60 * 1000,
+    windowMs: 60 * 1000,
     maxRequests: 50,
     message: 'Too many document verification attempts.',
 };
@@ -12,8 +12,10 @@ const DOC_RATE_LIMIT = {
 export async function GET(request: NextRequest) {
     try {
         // Rate limiting
-        const clientIP = getClientIP(request);
-        const rateLimit = checkRateLimit(`doc-verify:${clientIP}`, DOC_RATE_LIMIT);
+        const rateLimit = checkRateLimit(
+            getRateLimitIdentifier(request, 'doc-verify'),
+            DOC_RATE_LIMIT
+        );
         if (!rateLimit.allowed) {
             return NextResponse.json(
                 { error: DOC_RATE_LIMIT.message },

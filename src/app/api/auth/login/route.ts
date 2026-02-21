@@ -1,20 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { compareSync } from 'bcryptjs';
 import prisma from '@/lib/prisma';
-import { setSessionCookie, checkRateLimit, getClientIP } from '@/lib/auth';
+import { setSessionCookie, checkRateLimit, getRateLimitIdentifier } from '@/lib/auth';
 
-// Rate limit configuration: 5 attempts per 15 minutes per IP
+// Rate limit configuration: 50 attempts per minute per identifier
 const LOGIN_RATE_LIMIT = {
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    maxRequests: 5,
+    windowMs: 60 * 1000, // 1 minute
+    maxRequests: 50,
     message: 'Too many login attempts. Please try again later.',
 };
 
 export async function POST(request: NextRequest) {
     try {
         // Rate limiting by IP
-        const clientIP = getClientIP(request);
-        const rateLimitKey = `login:${clientIP}`;
+        const rateLimitKey = getRateLimitIdentifier(request, 'login');
         const rateLimit = checkRateLimit(rateLimitKey, LOGIN_RATE_LIMIT);
 
         if (!rateLimit.allowed) {

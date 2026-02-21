@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useFaceDetection } from '@/lib/face-utils';
 import { useFingerprint, checkBiometricAvailability } from '@/lib/fingerprint-utils';
+import { getCSRFHeaders } from '@/lib/csrf';
 import StepIndicator from '@/components/StepIndicator';
 import LoadingSpinner from '@/components/LoadingSpinner';
 
@@ -127,7 +128,7 @@ export default function VotePage() {
         try {
             const res = await fetch('/api/verify-face', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: getCSRFHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ faceImage: image }),
             });
             const data = await res.json();
@@ -153,23 +154,28 @@ export default function VotePage() {
         setVerifyMessage('');
 
         try {
-            // Get stored credential ID from server
-            const statusRes = await fetch('/api/verify-fingerprint');
+            // Get one-time challenge and credential ID from server
+            const statusRes = await fetch('/api/verify-fingerprint?mode=challenge');
             const statusData = await statusRes.json();
 
-            if (!statusData.hasFingerprint) {
+            if (!statusRes.ok || !statusData.hasFingerprint) {
                 setError('No fingerprint registered. Please use face verification.');
                 setBiometricVerifying(false);
                 return;
             }
 
-            const result = await fingerprint.verify();
+            const challenge = typeof statusData.challenge === 'string' ? statusData.challenge : '';
+            const credentialId = typeof statusData.credentialId === 'string'
+                ? statusData.credentialId
+                : undefined;
+
+            const result = await fingerprint.verify(challenge, credentialId);
 
             if (result.success && result.assertionData) {
                 // Send assertion to server for verification
                 const verifyRes = await fetch('/api/verify-fingerprint', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: getCSRFHeaders({ 'Content-Type': 'application/json' }),
                     body: JSON.stringify({ assertionData: result.assertionData }),
                 });
                 const verifyData = await verifyRes.json();
@@ -185,7 +191,7 @@ export default function VotePage() {
             } else {
                 setError(result.error || 'Fingerprint verification failed');
             }
-        } catch (err) {
+        } catch {
             setError('Verification error occurred');
         } finally {
             setBiometricVerifying(false);
@@ -215,13 +221,12 @@ export default function VotePage() {
         try {
             const res = await fetch('/api/vote', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: getCSRFHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({
                     candidateId: selectedCandidate,
                     electionId: elections[0].id,
                     // Include biometric data based on type
                     faceImage: faceResult?.image,
-                    fingerprintAssertion: fingerprintResult,
                     biometricType: userBiometricType,
                 }),
             });
@@ -398,7 +403,7 @@ export default function VotePage() {
                         <h2 className="text-center mb-16">
                             {userBiometricType === 'face' ? 'Face Verification' : 'Fingerprint Verification'}
                         </h2>
-                        <p className="text-center mb-24">We need to confirm it's really you.</p>
+                        <p className="text-center mb-24">We need to confirm it&apos;s really you.</p>
 
                         {userBiometricType === 'face' ? (
                             <>
@@ -442,6 +447,7 @@ export default function VotePage() {
                                 {faceResult && (
                                     <>
                                         <div className="captured-preview" style={{ borderRadius: 20 }}>
+                                            {/* eslint-disable-next-line @next/next/no-img-element */}
                                             <img src={faceResult.image} alt="Captured face for verification" />
                                         </div>
                                         {biometricVerifying && (

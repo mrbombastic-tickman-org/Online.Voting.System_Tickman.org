@@ -1,6 +1,35 @@
+import { createHash, timingSafeEqual } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
-import { getSession } from '@/lib/auth';
+import prisma from '@/lib/prisma';
+import { getSession, verifyCSRF } from '@/lib/auth';
+import {
+    issueFingerprintChallenge,
+    consumeFingerprintChallenge,
+    markFingerprintVerified,
+} from '@/lib/fingerprint-session';
+
+interface AssertionPayload {
+    id: string;
+    rawId: string;
+    type: string;
+    response: {
+        authenticatorData: string;
+        clientDataJSON: string;
+        signature: string;
+        userHandle: string | null;
+    };
+}
+
+interface ClientDataPayload {
+    type: string;
+    challenge: string;
+    origin: string;
+}
+
+const DEV_ALLOWED_ORIGINS = new Set([
+    'http://localhost:3000',
+    'https://localhost:3000',
+]);
 
 /**
  * Verify fingerprint authentication for voting
@@ -16,8 +45,15 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        if (!(await verifyCSRF(request))) {
+            return NextResponse.json(
+                { error: 'CSRF validation failed' },
+                { status: 403 }
+            );
+        }
+
         const body = await request.json();
-        const { assertionData } = body;
+        const { assertionData } = body as { assertionData?: string | AssertionPayload };
 
         if (!assertionData) {
             return NextResponse.json(
@@ -26,9 +62,12 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        // Get user with fingerprint credential
         const user = await prisma.user.findUnique({
-            where: { id: session.userId }
+            where: { id: session.userId },
+            select: {
+                fingerprintCredential: true,
+                fingerprintPublicKey: true,
+            },
         });
 
         if (!user) {
@@ -38,43 +77,90 @@ export async function POST(request: NextRequest) {
             );
         }
 
-        if (!user.fingerprintCredential) {
+        if (!user.fingerprintCredential || !user.fingerprintPublicKey) {
             return NextResponse.json(
-                { error: 'No fingerprint registered for this user' },
+                { error: 'No fingerprint public key registered for this user' },
                 { status: 400 }
             );
         }
 
-        // Parse assertion data
-        const assertion = JSON.parse(assertionData);
-
-        // Verify that the credential ID matches
-        if (assertion.id !== user.fingerprintCredential) {
+        const assertion = parseAssertion(assertionData);
+        if (!assertion) {
             return NextResponse.json(
-                { verified: false, message: 'Credential mismatch' },
-                { status: 200 }
+                { error: 'Invalid assertion payload' },
+                { status: 400 }
             );
         }
 
-        // In a production environment, you would verify the signature
-        // using the stored public key. For this demo, we trust the 
-        // WebAuthn assertion since it requires biometric verification.
+        let clientDataJSON = '';
+        try {
+            clientDataJSON = base64UrlToBuffer(assertion.response.clientDataJSON).toString('utf8');
+        } catch {
+            return NextResponse.json(
+                { error: 'Invalid clientDataJSON encoding' },
+                { status: 400 }
+            );
+        }
+        const clientData = parseClientData(clientDataJSON);
+        if (!clientData) {
+            return NextResponse.json(
+                { error: 'Invalid clientDataJSON' },
+                { status: 400 }
+            );
+        }
 
-        // The assertion contains:
-        // - authenticatorData: Contains info about the authenticator
-        // - clientDataJSON: Contains the challenge and origin
-        // - signature: Cryptographic signature
-        // - userHandle: User identifier
+        if (clientData.type !== 'webauthn.get') {
+            return NextResponse.json(
+                { error: 'Unexpected WebAuthn operation type' },
+                { status: 400 }
+            );
+        }
 
-        // For production, implement full signature verification:
-        // 1. Parse clientDataJSON and verify challenge
-        // 2. Verify origin matches
-        // 3. Verify signature using stored public key
-        // 4. Check signCount for replay protection
+        if (!isAllowedOrigin(clientData.origin, request)) {
+            return NextResponse.json(
+                { error: 'Origin mismatch during fingerprint verification' },
+                { status: 403 }
+            );
+        }
+
+        if (!consumeFingerprintChallenge(session.userId, clientData.challenge)) {
+            return NextResponse.json(
+                { verified: false, message: 'Fingerprint challenge expired or invalid' },
+                { status: 400 }
+            );
+        }
+
+        if (!isCredentialMatch(assertion, user.fingerprintCredential)) {
+            return NextResponse.json(
+                { verified: false, message: 'Credential mismatch' },
+                { status: 403 }
+            );
+        }
+
+        if (!verifyAuthenticatorData(assertion, clientData.origin)) {
+            return NextResponse.json(
+                { verified: false, message: 'Authenticator data validation failed' },
+                { status: 403 }
+            );
+        }
+
+        const signatureVerified = await verifySignature(
+            assertion,
+            user.fingerprintPublicKey
+        );
+
+        if (!signatureVerified) {
+            return NextResponse.json(
+                { verified: false, message: 'Fingerprint signature verification failed' },
+                { status: 403 }
+            );
+        }
+
+        markFingerprintVerified(session.userId);
 
         return NextResponse.json({
             verified: true,
-            message: 'Fingerprint verified successfully'
+            message: 'Fingerprint verified successfully',
         });
 
     } catch (error) {
@@ -90,7 +176,7 @@ export async function POST(request: NextRequest) {
  * Check if fingerprint is available for user
  * GET /api/verify-fingerprint
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
     try {
         const session = await getSession();
         if (!session) {
@@ -100,17 +186,35 @@ export async function GET() {
             );
         }
 
+        const mode = request.nextUrl.searchParams.get('mode');
+
         const user = await prisma.user.findUnique({
             where: { id: session.userId },
             select: {
                 fingerprintCredential: true,
-                biometricType: true
-            }
+                biometricType: true,
+            },
         });
+
+        if (mode === 'challenge') {
+            if (!user?.fingerprintCredential) {
+                return NextResponse.json(
+                    { error: 'No fingerprint registered for this user' },
+                    { status: 400 }
+                );
+            }
+
+            return NextResponse.json({
+                hasFingerprint: true,
+                biometricType: user.biometricType || 'face',
+                credentialId: user.fingerprintCredential,
+                challenge: issueFingerprintChallenge(session.userId),
+            });
+        }
 
         return NextResponse.json({
             hasFingerprint: !!user?.fingerprintCredential,
-            biometricType: user?.biometricType || 'face'
+            biometricType: user?.biometricType || 'face',
         });
 
     } catch (error) {
@@ -120,4 +224,178 @@ export async function GET() {
             { status: 500 }
         );
     }
+}
+
+function parseAssertion(assertionData: string | AssertionPayload): AssertionPayload | null {
+    try {
+        const parsed = typeof assertionData === 'string'
+            ? JSON.parse(assertionData)
+            : assertionData;
+
+        if (
+            !parsed ||
+            typeof parsed.id !== 'string' ||
+            typeof parsed.rawId !== 'string' ||
+            typeof parsed.type !== 'string' ||
+            !parsed.response ||
+            typeof parsed.response.authenticatorData !== 'string' ||
+            typeof parsed.response.clientDataJSON !== 'string' ||
+            typeof parsed.response.signature !== 'string'
+        ) {
+            return null;
+        }
+
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+function parseClientData(clientDataJSON: string): ClientDataPayload | null {
+    try {
+        const parsed = JSON.parse(clientDataJSON) as Partial<ClientDataPayload>;
+        if (
+            typeof parsed.type !== 'string' ||
+            typeof parsed.challenge !== 'string' ||
+            typeof parsed.origin !== 'string'
+        ) {
+            return null;
+        }
+        return parsed as ClientDataPayload;
+    } catch {
+        return null;
+    }
+}
+
+function getAllowedOrigins(request: NextRequest): Set<string> {
+    const origins = new Set<string>([new URL(request.url).origin]);
+    if (process.env.APP_ORIGIN) {
+        origins.add(process.env.APP_ORIGIN);
+    }
+    if (process.env.NODE_ENV !== 'production') {
+        for (const origin of DEV_ALLOWED_ORIGINS) {
+            origins.add(origin);
+        }
+    }
+    return origins;
+}
+
+function isAllowedOrigin(origin: string, request: NextRequest): boolean {
+    return getAllowedOrigins(request).has(origin);
+}
+
+function isCredentialMatch(assertion: AssertionPayload, storedCredential: string): boolean {
+    const normalizedStored = normalizeBase64Url(storedCredential);
+    return (
+        normalizeBase64Url(assertion.rawId) === normalizedStored ||
+        normalizeBase64Url(assertion.id) === normalizedStored ||
+        assertion.id === storedCredential
+    );
+}
+
+function verifyAuthenticatorData(assertion: AssertionPayload, origin: string): boolean {
+    let authenticatorData: Buffer;
+    try {
+        authenticatorData = base64UrlToBuffer(assertion.response.authenticatorData);
+    } catch {
+        return false;
+    }
+
+    if (authenticatorData.length < 37) return false;
+
+    const rpId = new URL(origin).hostname;
+    const expectedRpIdHash = createHash('sha256').update(rpId).digest();
+    const rpIdHash = authenticatorData.subarray(0, 32);
+
+    if (
+        rpIdHash.length !== expectedRpIdHash.length ||
+        !timingSafeEqual(rpIdHash, expectedRpIdHash)
+    ) {
+        return false;
+    }
+
+    const flags = authenticatorData[32];
+    const userPresent = (flags & 0x01) !== 0;
+    const userVerified = (flags & 0x04) !== 0;
+    return userPresent && userVerified;
+}
+
+async function verifySignature(
+    assertion: AssertionPayload,
+    storedPublicKey: string
+): Promise<boolean> {
+    let publicKeyBuffer: Buffer;
+    let authenticatorData: Buffer;
+    let clientDataJSON: Buffer;
+    let signature: Buffer;
+    try {
+        publicKeyBuffer = base64UrlToBuffer(storedPublicKey);
+        authenticatorData = base64UrlToBuffer(assertion.response.authenticatorData);
+        clientDataJSON = base64UrlToBuffer(assertion.response.clientDataJSON);
+        signature = base64UrlToBuffer(assertion.response.signature);
+    } catch {
+        return false;
+    }
+    const clientDataHash = createHash('sha256').update(clientDataJSON).digest();
+    const signedPayload = Buffer.concat([authenticatorData, clientDataHash]);
+    const publicKeyBytes = Uint8Array.from(publicKeyBuffer);
+    const signatureBytes = Uint8Array.from(signature);
+    const signedPayloadBytes = Uint8Array.from(signedPayload);
+
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) {
+        return false;
+    }
+
+    try {
+        const ecKey = await subtle.importKey(
+            'spki',
+            publicKeyBytes,
+            { name: 'ECDSA', namedCurve: 'P-256' },
+            false,
+            ['verify']
+        );
+
+        const ecVerified = await subtle.verify(
+            { name: 'ECDSA', hash: 'SHA-256' },
+            ecKey,
+            signatureBytes,
+            signedPayloadBytes
+        );
+
+        if (ecVerified) {
+            return true;
+        }
+    } catch {
+        // Not an EC key, try RSA.
+    }
+
+    try {
+        const rsaKey = await subtle.importKey(
+            'spki',
+            publicKeyBytes,
+            { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+            false,
+            ['verify']
+        );
+
+        return subtle.verify(
+            'RSASSA-PKCS1-v1_5',
+            rsaKey,
+            signatureBytes,
+            signedPayloadBytes
+        );
+    } catch {
+        return false;
+    }
+}
+
+function normalizeBase64Url(value: string): string {
+    return value.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function base64UrlToBuffer(value: string): Buffer {
+    const normalized = normalizeBase64Url(value);
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+    return Buffer.from(padded.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
 }

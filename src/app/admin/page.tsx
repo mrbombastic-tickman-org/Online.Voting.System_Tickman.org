@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import LoadingSpinner from '@/components/LoadingSpinner';
+import { getCSRFHeaders } from '@/lib/csrf';
 
 interface CandidateResult {
     id: string;
@@ -88,7 +89,7 @@ export default function AdminPage() {
         try {
             const res = await fetch('/api/admin/ip-tracking', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: getCSRFHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ enabled: !ipTracking }),
             });
             const data = await res.json();

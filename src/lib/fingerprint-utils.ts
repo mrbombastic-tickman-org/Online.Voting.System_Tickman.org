@@ -13,11 +13,18 @@ function bufferToBase64(buffer: ArrayBuffer): string {
     for (let i = 0; i < bytes.byteLength; i++) {
         binary += String.fromCharCode(bytes[i]);
     }
-    return btoa(binary);
+    return btoa(binary)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=/g, '');
 }
 
 function base64ToBuffer(base64: string): ArrayBuffer {
-    const binary = atob(base64);
+    const base64Standard = base64.replace(/-/g, '+').replace(/_/g, '/');
+    const padLen = (4 - (base64Standard.length % 4)) % 4;
+    const padded = base64Standard + '='.repeat(padLen);
+
+    const binary = atob(padded);
     const bytes = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) {
         bytes[i] = binary.charCodeAt(i);
@@ -27,6 +34,7 @@ function base64ToBuffer(base64: string): ArrayBuffer {
 
 export interface FingerprintCredential {
     id: string;
+    rawId: string;
     publicKey: string;
     signCount: number;
     transports?: string[];
@@ -168,18 +176,27 @@ export async function registerFingerprint(
         }
 
         const response = credential.response as AuthenticatorAttestationResponse;
+        const publicKey = response.getPublicKey?.();
+
+        if (!publicKey) {
+            return {
+                success: false,
+                error: 'Browser does not expose WebAuthn public key. Please use Face verification on this device.',
+            };
+        }
 
         // Extract credential data
         const credentialData: FingerprintCredential = {
             id: credential.id,
-            publicKey: bufferToBase64(response.attestationObject),
+            rawId: bufferToBase64(credential.rawId),
+            publicKey: bufferToBase64(publicKey),
             signCount: response.getAuthenticatorData ?
                 new DataView(response.getAuthenticatorData()).getUint32(33, false) : 0,
             transports: response.getTransports ? response.getTransports() : []
         };
 
-        // Store credential ID for later verification
-        localStorage.setItem('fingerprint_credential_id', credential.id);
+        // Store raw credential ID for later verification.
+        localStorage.setItem('fingerprint_credential_id', credentialData.rawId);
 
         return {
             success: true,
@@ -212,7 +229,8 @@ export async function registerFingerprint(
  * Verify fingerprint for authentication
  */
 export async function verifyFingerprint(
-    storedCredentialId: string
+    challenge: string,
+    storedCredentialId?: string
 ): Promise<VerificationResult & { assertionData?: string }> {
     try {
         // Check availability
@@ -224,18 +242,22 @@ export async function verifyFingerprint(
             };
         }
 
-        const challenge = generateChallenge();
-
         const publicKeyCredentialRequestOptions: PublicKeyCredentialRequestOptions = {
-            challenge,
-            allowCredentials: [{
-                id: base64ToBuffer(storedCredentialId),
-                type: 'public-key',
-                transports: ['internal']
-            }],
+            challenge: base64ToBuffer(challenge),
             userVerification: 'required',
             timeout: 60000
         };
+
+        if (storedCredentialId) {
+            const credentialBuffer = safeBase64ToBuffer(storedCredentialId);
+            if (credentialBuffer) {
+                publicKeyCredentialRequestOptions.allowCredentials = [{
+                    id: credentialBuffer,
+                    type: 'public-key',
+                    transports: ['internal']
+                }];
+            }
+        }
 
         const assertion = await navigator.credentials.get({
             publicKey: publicKeyCredentialRequestOptions
@@ -302,12 +324,18 @@ export interface FingerprintState {
 }
 
 export function useFingerprint() {
-    const [state, setState] = useState<FingerprintState>({
-        status: 'idle',
-        available: false,
-        biometricType: 'none',
-        error: null,
-        credentialId: null
+    const [state, setState] = useState<FingerprintState>(() => {
+        const storedId = typeof window !== 'undefined'
+            ? localStorage.getItem('fingerprint_credential_id')
+            : null;
+
+        return {
+            status: 'idle',
+            available: false,
+            biometricType: 'none',
+            error: null,
+            credentialId: storedId
+        };
     });
 
     // Check availability on mount
@@ -321,17 +349,6 @@ export function useFingerprint() {
         });
     }, []);
 
-    // Load stored credential ID
-    useEffect(() => {
-        const storedId = localStorage.getItem('fingerprint_credential_id');
-        if (storedId) {
-            setState(prev => ({
-                ...prev,
-                credentialId: storedId
-            }));
-        }
-    }, []);
-
     const register = useCallback(async (userEmail: string, userName: string) => {
         setState(prev => ({ ...prev, status: 'registering', error: null }));
 
@@ -341,7 +358,7 @@ export function useFingerprint() {
             setState(prev => ({
                 ...prev,
                 status: 'success',
-                credentialId: result.credential!.id
+                credentialId: result.credential!.rawId
             }));
         } else {
             setState(prev => ({
@@ -354,24 +371,27 @@ export function useFingerprint() {
         return result;
     }, []);
 
-    const verify = useCallback(async (credentialId?: string) => {
-        const idToUse = credentialId || state.credentialId;
-
-        if (!idToUse) {
+    const verify = useCallback(async (challenge: string, credentialId?: string) => {
+        if (!challenge) {
             setState(prev => ({
                 ...prev,
                 status: 'error',
-                error: 'No credential ID available'
+                error: 'No challenge available'
             }));
-            return { success: false, error: 'No credential ID available' };
+            return { success: false, error: 'No challenge available' };
         }
 
+        const idToUse = credentialId || state.credentialId || undefined;
         setState(prev => ({ ...prev, status: 'verifying', error: null }));
 
-        const result = await verifyFingerprint(idToUse);
+        const result = await verifyFingerprint(challenge, idToUse);
 
         if (result.success) {
-            setState(prev => ({ ...prev, status: 'success' }));
+            setState(prev => ({
+                ...prev,
+                status: 'success',
+                credentialId: idToUse || prev.credentialId,
+            }));
         } else {
             setState(prev => ({
                 ...prev,
@@ -397,4 +417,12 @@ export function useFingerprint() {
         verify,
         reset
     };
+}
+
+function safeBase64ToBuffer(value: string): ArrayBuffer | null {
+    try {
+        return base64ToBuffer(value);
+    } catch {
+        return null;
+    }
 }

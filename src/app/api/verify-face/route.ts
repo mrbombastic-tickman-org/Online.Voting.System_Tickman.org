@@ -1,7 +1,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getSession, checkRateLimit, getClientIP } from '@/lib/auth';
+import { getSession, checkRateLimit, getRateLimitIdentifier, verifyCSRF } from '@/lib/auth';
 import { facePlusPlus } from '@/lib/faceplusplus';
 
 // Rate limit: 50 face verification attempts per minute
@@ -14,8 +14,10 @@ const FACE_RATE_LIMIT = {
 export async function POST(request: NextRequest) {
     try {
         // ... (keep rate limit and session check)
-        const clientIP = getClientIP(request);
-        const rateLimit = checkRateLimit(`face-verify:${clientIP}`, FACE_RATE_LIMIT);
+        const rateLimit = checkRateLimit(
+            getRateLimitIdentifier(request, 'face-verify'),
+            FACE_RATE_LIMIT
+        );
         if (!rateLimit.allowed) {
             return NextResponse.json({ error: FACE_RATE_LIMIT.message }, { status: 429 });
         }
@@ -23,6 +25,10 @@ export async function POST(request: NextRequest) {
         const session = await getSession();
         if (!session) {
             return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+        }
+
+        if (!(await verifyCSRF(request))) {
+            return NextResponse.json({ error: 'CSRF validation failed' }, { status: 403 });
         }
 
         const { faceImage } = await request.json(); // Expect faceImage now

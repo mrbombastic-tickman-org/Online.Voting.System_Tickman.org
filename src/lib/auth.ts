@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypto';
 import prisma from './prisma';
@@ -235,28 +234,68 @@ setInterval(() => {
     }
 }, 60000); // Clean every minute
 
-// Get client IP with trusted proxy validation
+// Get client IP with trusted proxy support and safe fallback behavior.
 export function getClientIP(request: Request): string {
-    // In production, configure your trusted proxy IPs
-    const trustedProxies = process.env.TRUSTED_PROXIES?.split(',') || [];
+    const trustedProxies = (process.env.TRUSTED_PROXIES || '')
+        .split(',')
+        .map((ip) => ip.trim())
+        .filter(Boolean);
 
-    const forwarded = request.headers.get('x-forwarded-for');
-    if (forwarded && trustedProxies.length > 0) {
-        // Only trust X-Forwarded-For if request comes from a trusted proxy
-        const parts = forwarded.split(',').map(s => s.trim());
-        // Use the rightmost untrusted IP or the first one if all are trusted
-        return parts[parts.length - 1] || parts[0];
+    const forwardedFor = firstForwardedIP(request.headers.get('x-forwarded-for'));
+    const realIP = normalizeIP(request.headers.get('x-real-ip'));
+    const vendorIP = normalizeIP(
+        request.headers.get('cf-connecting-ip') ||
+        request.headers.get('true-client-ip') ||
+        request.headers.get('x-vercel-forwarded-for') ||
+        request.headers.get('fly-client-ip')
+    );
+
+    // If trusted proxies are configured, prefer proxy-forwarded headers.
+    if (trustedProxies.length > 0) {
+        return forwardedFor || realIP || vendorIP || 'unknown';
     }
 
-    // Fallback: don't trust client-provided headers by default
-    const realIP = request.headers.get('x-real-ip');
-    if (realIP && trustedProxies.length > 0) {
-        return realIP;
+    // Without explicit proxy trust config, still use best-effort client IP
+    // to avoid collapsing all rate limits under "unknown".
+    return forwardedFor || realIP || vendorIP || 'unknown';
+}
+
+export function getRateLimitIdentifier(request: Request, scope: string): string {
+    const ip = getClientIP(request);
+    if (ip !== 'unknown') {
+        return `${scope}:ip:${ip}`;
     }
 
-    // If no trusted proxy configuration, use a default
-    // In production behind a reverse proxy, this should be configured properly
-    return 'unknown';
+    // Fallback identifier if no IP data is available.
+    const ua = request.headers.get('user-agent') || 'unknown';
+    const lang = request.headers.get('accept-language') || '';
+    const fingerprint = createHash('sha256')
+        .update(`${ua}|${lang}`)
+        .digest('hex')
+        .slice(0, 16);
+    return `${scope}:fp:${fingerprint}`;
+}
+
+function firstForwardedIP(value: string | null): string | null {
+    if (!value) return null;
+    const first = value.split(',')[0]?.trim() || '';
+    return normalizeIP(first);
+}
+
+function normalizeIP(value: string | null): string | null {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    if (trimmed.startsWith('[') && trimmed.includes(']')) {
+        return trimmed.slice(1, trimmed.indexOf(']'));
+    }
+
+    if (/^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(trimmed)) {
+        return trimmed.split(':')[0];
+    }
+
+    return trimmed;
 }
 
 // Generate a secure session ID for database storage
