@@ -51,6 +51,7 @@ export default function VotePage() {
 
     // Face verification
     const [faceResult, setFaceResult] = useState<{ descriptor: number[]; image: string } | null>(null);
+    const [faceProof, setFaceProof] = useState<string | null>(null);
     const face = useFaceDetection();
 
     // Fingerprint verification
@@ -103,6 +104,7 @@ export default function VotePage() {
         setError('');
         setBiometricVerified(false);
         setFaceResult(null);
+        setFaceProof(null);
         setFingerprintResult(null);
         setVerifyMessage('');
 
@@ -135,13 +137,16 @@ export default function VotePage() {
             if (data.verified) {
                 setBiometricVerified(true);
                 setVerifyMessage(data.message);
+                setFaceProof(typeof data.faceProof === 'string' ? data.faceProof : null);
                 setStep('confirm');
             } else {
                 setError(data.message || data.error || 'Identity Mismatch!');
                 setBiometricVerified(false);
+                setFaceProof(null);
             }
         } catch {
             setError('Verification Error');
+            setFaceProof(null);
         } finally {
             setBiometricVerifying(false);
         }
@@ -200,6 +205,7 @@ export default function VotePage() {
 
     const retakeBiometric = async () => {
         setFaceResult(null);
+        setFaceProof(null);
         setFingerprintResult(null);
         setBiometricVerified(false);
         setError('');
@@ -227,6 +233,7 @@ export default function VotePage() {
                     electionId: elections[0].id,
                     // Include biometric data based on type
                     faceImage: faceResult?.image,
+                    faceProof,
                     biometricType: userBiometricType,
                 }),
             });
@@ -245,12 +252,14 @@ export default function VotePage() {
         if (step === 'confirm') {
             setStep('verify');
             setFaceResult(null);
+            setFaceProof(null);
             setFingerprintResult(null);
             setBiometricVerified(false);
             setVerifyMessage('');
         } else if (step === 'verify') {
             setStep('select');
             setFaceResult(null);
+            setFaceProof(null);
             setFingerprintResult(null);
             setBiometricVerified(false);
             face.reset();

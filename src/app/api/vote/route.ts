@@ -11,6 +11,7 @@ import {
 import { facePlusPlus } from '@/lib/faceplusplus';
 import { isIpTrackingEnabled } from '@/lib/ip-tracking';
 import { consumeFingerprintVerification } from '@/lib/fingerprint-session';
+import { verifyFaceProof } from '@/lib/face-proof';
 
 // Rate limit: 50 vote attempts per minute
 const VOTE_RATE_LIMIT = {
@@ -49,7 +50,10 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
-        const { candidateId, electionId, faceImage, biometricType = 'face' } = body;
+        const { candidateId, electionId, faceImage, faceProof, biometricType = 'face' } = body;
+        const hasValidFaceProof = biometricType === 'face'
+            && typeof faceProof === 'string'
+            && verifyFaceProof(faceProof, session.userId).valid;
 
         const idRegex = /^[a-zA-Z0-9\-_]+$/;
         if (!candidateId || !electionId || !idRegex.test(candidateId) || !idRegex.test(electionId)) {
@@ -57,7 +61,7 @@ export async function POST(request: NextRequest) {
         }
 
         if (biometricType === 'face') {
-            if (!faceImage || typeof faceImage !== 'string') {
+            if (!hasValidFaceProof && (!faceImage || typeof faceImage !== 'string')) {
                 return NextResponse.json({ error: 'Face image is required for verification' }, { status: 400 });
             }
         } else if (biometricType !== 'fingerprint') {
@@ -97,28 +101,29 @@ export async function POST(request: NextRequest) {
                 return NextResponse.json({ error: 'No face biometric registered' }, { status: 400 });
             }
 
-            const storedToken = user.faceDescriptor;
-            if (storedToken.trim().startsWith('[')) {
-                return NextResponse.json({
-                    error: 'Legacy face data detected. Please re-register to upgrade to Face++.',
-                    verified: false,
-                }, { status: 400 });
-            }
+            if (!hasValidFaceProof) {
+                const storedToken = user.faceDescriptor;
+                if (storedToken.trim().startsWith('[')) {
+                    return NextResponse.json({
+                        error: 'Legacy face data detected. Please re-register to upgrade to Face++.',
+                        verified: false,
+                    }, { status: 400 });
+                }
 
-            const confidence = await facePlusPlus.compare(storedToken, faceImage);
-            if (confidence < 0) {
-                return NextResponse.json({
-                    error: 'Face verification service error. Please try again.',
-                    verified: false,
-                }, { status: 500 });
-            }
+                const comparison = await facePlusPlus.compare(storedToken, faceImage);
+                if (!comparison) {
+                    return NextResponse.json({
+                        error: 'Face verification service error. Please try again.',
+                        verified: false,
+                    }, { status: 500 });
+                }
 
-            const FACE_THRESHOLD = 75;
-            if (confidence < FACE_THRESHOLD) {
-                return NextResponse.json({
-                    error: 'Face verification failed. Please try again.',
-                    verified: false,
-                }, { status: 403 });
+                if (comparison.confidence < comparison.threshold) {
+                    return NextResponse.json({
+                        error: 'Face verification failed. Please verify again and retry.',
+                        verified: false,
+                    }, { status: 403 });
+                }
             }
         } else {
             if (!user.fingerprintCredential) {

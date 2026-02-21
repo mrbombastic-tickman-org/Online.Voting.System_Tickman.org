@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
             const faceToken = await facePlusPlus.detect(faceImage);
             if (!faceToken) {
                 return NextResponse.json(
-                    { error: 'Face++ could not detect a face. Please try again with better lighting.' },
+                    { error: 'Face detection failed. Ensure one clear face is visible with good lighting.' },
                     { status: 400 }
                 );
             }

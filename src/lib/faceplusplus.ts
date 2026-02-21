@@ -1,5 +1,6 @@
-
 const FACEPLUSPLUS_API_URL = 'https://api-us.faceplusplus.com/facepp/v3';
+const MIN_STRICT_FACE_THRESHOLD = 82;
+const STRICT_THRESHOLD_MARGIN = 1;
 
 interface FacePlusPlusDetectResponse {
     face_token?: string;
@@ -7,14 +8,22 @@ interface FacePlusPlusDetectResponse {
     error_message?: string;
 }
 
+interface FacePlusPlusThresholds {
+    '1e-3'?: number;
+    '1e-4'?: number;
+    '1e-5'?: number;
+}
+
 interface FacePlusPlusCompareResponse {
     confidence: number;
-    thresholds?: {
-        '1e-3': number;
-        '1e-4': number;
-        '1e-5': number;
-    };
+    thresholds?: FacePlusPlusThresholds;
     error_message?: string;
+}
+
+export interface FaceCompareResult {
+    confidence: number;
+    threshold: number;
+    thresholds: FacePlusPlusThresholds | null;
 }
 
 export class FacePlusPlus {
@@ -26,8 +35,21 @@ export class FacePlusPlus {
         this.apiSecret = process.env.FACEPLUSPLUS_API_SECRET || '';
 
         if (!this.apiKey || !this.apiSecret) {
-            console.warn('⚠️ Face++ API keys are missing!');
+            console.warn('Face++ API keys are missing');
         }
+    }
+
+    private resolveThreshold(thresholds?: FacePlusPlusThresholds): number {
+        const strictApiThreshold = thresholds?.['1e-5'];
+
+        if (typeof strictApiThreshold === 'number' && Number.isFinite(strictApiThreshold)) {
+            return Math.max(
+                MIN_STRICT_FACE_THRESHOLD,
+                Math.ceil(strictApiThreshold + STRICT_THRESHOLD_MARGIN)
+            );
+        }
+
+        return MIN_STRICT_FACE_THRESHOLD;
     }
 
     /**
@@ -54,11 +76,15 @@ export class FacePlusPlus {
                 return null;
             }
 
-            if (data.faces && data.faces.length > 0) {
+            if (data.faces && data.faces.length === 1) {
                 return data.faces[0].face_token;
             }
 
-            return null; // No face detected
+            if (data.faces && data.faces.length > 1) {
+                console.error('Face++ Detect Error: multiple faces detected during registration');
+            }
+
+            return null;
         } catch (error) {
             console.error('Face++ Detect Exception:', error);
             return null;
@@ -69,9 +95,9 @@ export class FacePlusPlus {
      * Compares a stored face_token with a new base64 image.
      * @param faceToken The token from registration.
      * @param imageBase64 The new image from verification.
-     * @returns confidence score (0-100) or -1 on error.
+     * @returns confidence + strict threshold to evaluate or null on error.
      */
-    async compare(faceToken: string, imageBase64: string): Promise<number> {
+    async compare(faceToken: string, imageBase64: string): Promise<FaceCompareResult | null> {
         try {
             const formData = new FormData();
             formData.append('api_key', this.apiKey);
@@ -88,13 +114,22 @@ export class FacePlusPlus {
 
             if (data.error_message) {
                 console.error('Face++ Compare Error:', data.error_message);
-                return -1;
+                return null;
             }
 
-            return data.confidence;
+            if (typeof data.confidence !== 'number' || !Number.isFinite(data.confidence)) {
+                console.error('Face++ Compare Error: invalid confidence value');
+                return null;
+            }
+
+            return {
+                confidence: data.confidence,
+                threshold: this.resolveThreshold(data.thresholds),
+                thresholds: data.thresholds ?? null,
+            };
         } catch (error) {
             console.error('Face++ Compare Exception:', error);
-            return -1;
+            return null;
         }
     }
 }

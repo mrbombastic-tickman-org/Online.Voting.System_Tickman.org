@@ -1,8 +1,8 @@
-
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getSession, checkRateLimit, getRateLimitIdentifier, verifyCSRF } from '@/lib/auth';
 import { facePlusPlus } from '@/lib/faceplusplus';
+import { issueFaceProof, FACE_PROOF_TTL_SECONDS } from '@/lib/face-proof';
 
 // Rate limit: 50 face verification attempts per minute
 const FACE_RATE_LIMIT = {
@@ -13,7 +13,6 @@ const FACE_RATE_LIMIT = {
 
 export async function POST(request: NextRequest) {
     try {
-        // ... (keep rate limit and session check)
         const rateLimit = checkRateLimit(
             getRateLimitIdentifier(request, 'face-verify'),
             FACE_RATE_LIMIT
@@ -31,24 +30,20 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'CSRF validation failed' }, { status: 403 });
         }
 
-        const { faceImage } = await request.json(); // Expect faceImage now
+        const { faceImage } = await request.json();
         if (!faceImage) {
             return NextResponse.json({ error: 'Face image is required' }, { status: 400 });
         }
 
-        // Get the user's stored face token
         const user = await prisma.user.findUnique({
             where: { id: session.userId },
-            select: { faceDescriptor: true }, // This now holds the face_token string
+            select: { faceDescriptor: true },
         });
 
         if (!user || !user.faceDescriptor) {
             return NextResponse.json({ verified: false, error: 'No face biometric registered.' }, { status: 400 });
         }
 
-        // Call Face++ Compare
-        // user.faceDescriptor is the face_token (e.g., "302302302...") or the old JSON array (legacy)
-        // We should check if it's a valid token type (string not starting with [)
         const storedToken = user.faceDescriptor;
         if (storedToken.trim().startsWith('[')) {
             return NextResponse.json({
@@ -57,25 +52,42 @@ export async function POST(request: NextRequest) {
             });
         }
 
-        const confidence = await facePlusPlus.compare(storedToken, faceImage);
+        const comparison = await facePlusPlus.compare(storedToken, faceImage);
+        if (!comparison) {
+            return NextResponse.json({ verified: false, error: 'Face verification service error.' }, { status: 500 });
+        }
 
-        // Face++ thresholds:
-        // 1e-3: ~62.3
-        // 1e-4: ~69.0
-        // 1e-5: ~75.0 (High security)
-        // We can use 80 for very high confidence, or 75.
-        const verified = confidence > 75;
+        const verified = comparison.confidence >= comparison.threshold;
+        const confidenceDelta = comparison.confidence - comparison.threshold;
+        const matchQuality = confidenceDelta >= 8 ? 'strong' : confidenceDelta >= 0 ? 'acceptable' : 'mismatch';
 
-        console.log(`Face++ Verification: confidence=${confidence}, verified=${verified}`);
+        console.log(
+            `Face++ Verification: confidence=${comparison.confidence}, threshold=${comparison.threshold}, verified=${verified}`
+        );
 
+        if (!verified) {
+            const nearMatch = comparison.confidence >= comparison.threshold - 4;
+            return NextResponse.json({
+                verified: false,
+                confidence: comparison.confidence,
+                threshold: comparison.threshold,
+                matchQuality,
+                message: nearMatch
+                    ? 'Almost matched. Keep your face centered and steady, then retry.'
+                    : 'Face mismatch. Please try again.',
+            }, { status: 403 });
+        }
+
+        const faceProof = issueFaceProof(session.userId, comparison.confidence, comparison.threshold);
         return NextResponse.json({
-            verified,
-            matchQuality: confidence > 90 ? 'strong' : 'acceptable',
-            message: verified
-                ? 'Identity verified successfully'
-                : 'Face mismatch. Please try again.',
+            verified: true,
+            confidence: comparison.confidence,
+            threshold: comparison.threshold,
+            matchQuality,
+            faceProof,
+            proofExpiresInSeconds: FACE_PROOF_TTL_SECONDS,
+            message: 'Identity verified successfully',
         });
-
     } catch (error) {
         console.error('Face verification error:', error);
         return NextResponse.json({ error: 'Face verification failed' }, { status: 500 });
