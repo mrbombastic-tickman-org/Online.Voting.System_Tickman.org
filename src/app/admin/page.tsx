@@ -35,6 +35,19 @@ interface AdminStats {
     totalVotes: number;
 }
 
+interface StartCandidate {
+    name: string;
+    party: string;
+    symbol: string;
+}
+
+const DEFAULT_START_CANDIDATES: StartCandidate[] = [
+    { name: 'Rajesh Kumar', party: 'National Progress Party', symbol: '🌸' },
+    { name: 'Sunita Devi', party: "People's Alliance", symbol: '🌾' },
+    { name: 'Mohammed Faiz', party: 'Democratic Front', symbol: '⭐' },
+    { name: 'Lakshmi Narayanan', party: 'Unity Coalition', symbol: '🕊️' },
+];
+
 export default function AdminPage() {
     const router = useRouter();
     const [stats, setStats] = useState<AdminStats | null>(null);
@@ -44,6 +57,16 @@ export default function AdminPage() {
     const [accessError, setAccessError] = useState('');
     const [ipTracking, setIpTracking] = useState(true);
     const [ipToggleLoading, setIpToggleLoading] = useState(false);
+    const [startLoading, setStartLoading] = useState(false);
+    const [startError, setStartError] = useState('');
+    const [startSuccess, setStartSuccess] = useState('');
+    const [electionTitle, setElectionTitle] = useState('');
+    const [electionDescription, setElectionDescription] = useState('');
+    const [startDateTime, setStartDateTime] = useState('');
+    const [endDateTime, setEndDateTime] = useState('');
+    const [candidateText, setCandidateText] = useState(
+        DEFAULT_START_CANDIDATES.map((c) => `${c.name}|${c.party}|${c.symbol}`).join('\n')
+    );
 
     useEffect(() => {
         fetch('/api/auth/session')
@@ -98,6 +121,68 @@ export default function AdminPage() {
             }
         } catch { /* ignore */ }
         setIpToggleLoading(false);
+    };
+
+    const parseCandidates = (): StartCandidate[] => {
+        const lines = candidateText
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean);
+
+        return lines
+            .map((line) => {
+                const [name = '', party = '', symbol = '🏛️'] = line.split('|').map((part) => part.trim());
+                return { name, party, symbol: symbol || '🏛️' };
+            })
+            .filter((candidate) => candidate.name && candidate.party);
+    };
+
+    const startElection = async () => {
+        setStartError('');
+        setStartSuccess('');
+        setStartLoading(true);
+
+        try {
+            const candidates = parseCandidates();
+            if (candidates.length < 2) {
+                setStartError('Please provide at least 2 valid candidates in format Name|Party|Symbol');
+                setStartLoading(false);
+                return;
+            }
+
+            const res = await fetch('/api/admin/elections/start', {
+                method: 'POST',
+                headers: getCSRFHeaders({ 'Content-Type': 'application/json' }),
+                body: JSON.stringify({
+                    title: electionTitle,
+                    description: electionDescription,
+                    startDate: startDateTime || undefined,
+                    endDate: endDateTime || undefined,
+                    candidates,
+                }),
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                setStartError(data.error || 'Failed to start election');
+                setStartLoading(false);
+                return;
+            }
+
+            setStartSuccess(`Election started: ${data.election?.title || electionTitle || 'New Election'}`);
+
+            const statsRes = await fetch('/api/admin/stats');
+            const statsData = await statsRes.json();
+            if (statsRes.ok) {
+                setStats(statsData.stats);
+                setElections(statsData.elections || []);
+                setRecentVotes(statsData.recentVotes || []);
+            }
+        } catch {
+            setStartError('Failed to start election');
+        } finally {
+            setStartLoading(false);
+        }
     };
 
     if (loading) {
@@ -161,6 +246,89 @@ export default function AdminPage() {
                     aria-checked={ipTracking}
                 >
                     <span className="toggle-knob" />
+                </button>
+            </div>
+
+            {/* Start Election */}
+            <div className="card mb-24">
+                <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: 12 }}>Start Election</h2>
+                <p style={{ color: 'var(--text-muted)', marginBottom: 16 }}>
+                    Starting a new election will deactivate currently active elections.
+                </p>
+
+                {startError && (
+                    <div className="alert alert-error" role="alert">{startError}</div>
+                )}
+                {startSuccess && (
+                    <div className="alert alert-success" role="status">{startSuccess}</div>
+                )}
+
+                <div className="form-group">
+                    <label className="form-label" htmlFor="start-election-title">Election Title</label>
+                    <input
+                        id="start-election-title"
+                        className="form-input"
+                        value={electionTitle}
+                        onChange={(e) => setElectionTitle(e.target.value)}
+                        placeholder={`General Election ${new Date().getFullYear()}`}
+                    />
+                </div>
+
+                <div className="form-group">
+                    <label className="form-label" htmlFor="start-election-description">Description</label>
+                    <textarea
+                        id="start-election-description"
+                        className="form-input"
+                        value={electionDescription}
+                        onChange={(e) => setElectionDescription(e.target.value)}
+                        placeholder="National election started by admin."
+                        rows={3}
+                    />
+                </div>
+
+                <div className="grid-2 mb-16">
+                    <div className="form-group">
+                        <label className="form-label" htmlFor="start-election-start-date">Start Date & Time</label>
+                        <input
+                            id="start-election-start-date"
+                            type="datetime-local"
+                            className="form-input"
+                            value={startDateTime}
+                            onChange={(e) => setStartDateTime(e.target.value)}
+                        />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label" htmlFor="start-election-end-date">End Date & Time</label>
+                        <input
+                            id="start-election-end-date"
+                            type="datetime-local"
+                            className="form-input"
+                            value={endDateTime}
+                            onChange={(e) => setEndDateTime(e.target.value)}
+                        />
+                    </div>
+                </div>
+
+                <div className="form-group">
+                    <label className="form-label" htmlFor="start-election-candidates">
+                        Candidates (one per line: Name|Party|Symbol)
+                    </label>
+                    <textarea
+                        id="start-election-candidates"
+                        className="form-input"
+                        value={candidateText}
+                        onChange={(e) => setCandidateText(e.target.value)}
+                        rows={6}
+                    />
+                </div>
+
+                <button
+                    className="btn btn-primary"
+                    onClick={startElection}
+                    disabled={startLoading}
+                    aria-busy={startLoading}
+                >
+                    {startLoading ? 'Starting...' : 'Start Election'}
                 </button>
             </div>
 

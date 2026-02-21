@@ -99,10 +99,15 @@ export default function RegisterPage() {
     ];
 
     const verifyDocument = async () => {
+        const normalizedDocNumber = docNumber.trim();
+        if (!normalizedDocNumber) {
+            return;
+        }
+
         setError('');
         setLoading(true);
         try {
-            const res = await fetch(`/api/verify-document?documentNumber=${encodeURIComponent(docNumber)}`);
+            const res = await fetch(`/api/verify-document?documentNumber=${encodeURIComponent(normalizedDocNumber)}`);
             const data = await res.json();
             if (!res.ok) { setError(data.error); return; }
             setGovRecord(data.record);
@@ -235,8 +240,15 @@ export default function RegisterPage() {
                                 placeholder="AADHAAR-XXXX-XXXX-XXXX"
                                 value={docNumber}
                                 onChange={(e) => setDocNumber(e.target.value)}
+                                onInput={(e) => setDocNumber((e.target as HTMLInputElement).value)}
+                                autoComplete="off"
+                                autoCorrect="off"
+                                spellCheck={false}
                             />
                         </div>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '-12px', marginBottom: '16px' }}>
+                            Use numeric 0 (zero), not letter O.
+                        </p>
                         <button
                             className="btn btn-primary btn-lg w-full"
                             onClick={verifyDocument}
